@@ -1,0 +1,495 @@
+import React, { useState, useEffect } from 'react';
+import {
+  Plus, Trash2, Edit, Loader2, Check, X,
+  Box, Package, ClipboardList,
+  Search, CheckCircle, AlertTriangle
+} from 'lucide-react';
+import { DataService } from '../../services/dataService';
+import { Scanner } from './Scanner';
+import type { CourierName, PaymentType, OrderStatus } from '../../types';
+
+interface Carton {
+  id: string;
+  location: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+interface Product {
+  id: string;
+  sku: string;
+  qr_code: string | null;
+  barcode: string | null;
+  product_name: string;
+  status: string;
+  reserved_at: string | null;
+  order_id: string | null;
+  customer_name: string | null;
+  carton_id: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export const CartonsView = () => {
+  const [cartons, setCartons] = useState<Carton[]>([]);
+  const [products, setProducts] = useState<Product[]>([]);
+  const [selectedCarton, setSelectedCarton] = useState<Carton | null>(null);
+  const [loading, setLoading] = useState<boolean>(false);
+  const [creating, setCreating] = useState<boolean>(false);
+  const [editing, setEditing] = useState<boolean>(false);
+  const [newLocation, setNewLocation] = useState<string>('');
+  const [editLocation, setEditLocation] = useState<string>('');
+  const [searchTerm, setSearchTerm] = useState<string>('');
+  const [scannedProductId, setScannedProductId] = useState<string>('');
+  const [isScannerOpen, setIsScannerOpen] = useState<boolean>(false);
+
+  useEffect(() => {
+    loadCartons();
+  }, []);
+
+  const loadCartons = async () => {
+    setLoading(true);
+    try {
+      const data = await DataService.getCartons();
+      setCartons(data);
+    } catch (err) {
+      console.error('Failed to load cartons:', err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const loadProductsForCarton = async (cartonId: string) => {
+    setLoading(true);
+    try {
+      const data = await DataService.getProducts(cartonId);
+      setProducts(data);
+    } catch (err) {
+      console.error('Failed to load products for carton:', err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleCreateCarton = async () => {
+    if (!newLocation.trim()) return;
+    setCreating(true);
+    try {
+      const carton = await DataService.addCarton(newLocation.trim());
+      if (carton) {
+        await loadCartons();
+        setNewLocation('');
+      }
+    } catch (err) {
+      console.error('Failed to create carton:', err);
+    } finally {
+      setCreating(false);
+    }
+  };
+
+  const handleUpdateCarton = async (carton: Carton) => {
+    if (!editLocation.trim()) return;
+    setEditing(true);
+    try {
+      const success = await DataService.updateCarton(carton.id, editLocation.trim());
+      if (success) {
+        await loadCartons();
+        setEditing(false);
+        setEditLocation('');
+      }
+    } catch (err) {
+      console.error('Failed to update carton:', err);
+    } finally {
+      setEditing(false);
+    }
+  };
+
+  const handleDeleteCarton = async (id: string) => {
+    if (!window.confirm('Are you sure you want to delete this carton? This will fail if the carton contains products.')) return;
+    setLoading(true);
+    try {
+      const success = await DataService.deleteCarton(id);
+      if (success) {
+        await loadCartons();
+        if (selectedCarton?.id === id) {
+          setSelectedCarton(null);
+          setProducts([]);
+        }
+      }
+    } catch (err) {
+      console.error('Failed to delete carton:', err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleSelectCarton = (carton: Carton) => {
+    setSelectedCarton(carton);
+    loadProductsForCarton(carton.id);
+  };
+
+  const handleScanProduct = () => {
+    setIsScannerOpen(true);
+  };
+
+  const handleProductScanComplete = async (orderId: string, productId: string, cartonId: string) => {
+    // In this context, we want to assign the scanned product to the selected carton
+    if (selectedCarton) {
+      try {
+        await DataService.updateProduct(productId, { carton_id: selectedCarton.id });
+        await loadProductsForCarton(selectedCarton.id);
+      } catch (err) {
+        console.error('Failed to assign product to carton:', err);
+      }
+    }
+    setIsScannerOpen(false);
+  };
+
+  const handleProductScanCancel = () => {
+    setIsScannerOpen(false);
+    setScannedProductId('');
+  };
+
+  const handleAssignProduct = async (productId: string) => {
+    if (!selectedCarton) return;
+    try {
+      await DataService.updateProduct(productId, { carton_id: selectedCarton.id });
+      await loadProductsForCarton(selectedCarton.id);
+    } catch (err) {
+        console.error('Failed to assign product to carton:', err);
+      }
+    }
+  };
+
+  const handleRemoveProduct = async (productId: string) => {
+    try {
+      await DataService.updateProduct(productId, { carton_id: null });
+      await loadProductsForCarton(selectedCarton?.id || '');
+    } catch (err) {
+      console.error('Failed to remove product from carton:', err);
+    }
+  };
+
+  const filteredCartons = cartons.filter(carton =>
+    carton.location?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+    carton.id.toLowerCase().includes(searchTerm.toLowerCase())
+  );
+
+  return (
+    <div className="p-6 space-y-6">
+      <div className="flex flex-col md:flex-row md:items-center md:justify-between">
+        <div>
+          <h2 className="text-2xl font-black text-white tracking-tight">
+            Cartons Management
+          </h2>
+          <p className="text-xs text-slate-400">
+            Create, manage, and organize cartons for product storage
+          </p>
+        </div>
+        <div className="flex items-center gap-4 md:ml-auto">
+          <input
+            type="text"
+            placeholder="Search cartons..."
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+            className="w-48 md:w-64 px-3 py-2 bg-slate-950 border border-slate-800 rounded-lg text-white font-mono text-xs focus:outline-none focus:border-emerald-500"
+          />
+          <button
+            onClick={() => setSelectedCarton(null)}
+            className="px-4 py-2 rounded-xl bg-slate-800 text-slate-300 font-bold text-xs hover:bg-slate-700 transition"
+          >
+            Clear Selection
+          </button>
+        </div>
+      </div>
+
+      {/* Create Carton Form */}
+      <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6">
+        <div className="flex items-center justify-between mb-4">
+          <h3 className="text-lg font-bold text-white">Create New Carton</h3>
+          {creating && (
+            <Loader2 className="w-4 h-4 animate-spin" />
+          )}
+        </div>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div>
+            <label className="text-[11px] font-bold text-slate-400 uppercase tracking-wider block mb-1">
+              Location
+            </label>
+            <input
+              type="text"
+              value={newLocation}
+              onChange={(e) => setNewLocation(e.target.value)}
+              placeholder="e.g., Aisle 1, Shelf 2"
+              className="w-full px-3 py-2 bg-slate-950 border border-slate-800 rounded-lg text-white text-xs focus:outline-none focus:border-emerald-500"
+            />
+          </div>
+          <div className="flex items-end">
+            <button
+              onClick={handleCreateCarton}
+              disabled={creating || !newLocation.trim()}
+              className="w-full px-5 py-2 rounded-xl bg-emerald-500 text-slate-950 font-black text-xs hover:bg-emerald-400 transition flex items-center justify-center gap-2 disabled:opacity-50"
+            >
+              {creating ? 'Creating...' : 'Create Carton'}
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {/* Cartons List */}
+      <div className="bg-slate-900 border border-slate-800 rounded-2xl">
+        <div className="px-6 py-4 border-b border-slate-800">
+          <h3 className="text-lg font-bold text-white">
+            Cartons List
+          </h3>
+        </div>
+        <div className="overflow-y-auto max-h-[400px]">
+          {loading ? (
+            <div className="text-center py-8">
+              <Loader2 className="w-8 h-8 animate-spin mx-auto mb-2" />
+              <p className="text-sm text-slate-400">Loading cartons...</p>
+            </div>
+          ) : filteredCartons.length === 0 ? (
+            <div className="text-center py-8">
+              <p className="text-sm text-slate-400">
+                No cartons found. Create a carton to get started.
+              </p>
+            </div>
+          ) : (
+            <div className="divide-y divide-slate-800/60">
+              {filteredCartons.map((carton) => (
+                <div key={carton.id} className="px-6 py-4 hover:bg-slate-800/40 transition cursor-pointer"
+                  onClick={() => handleSelectCarton(carton)}
+                  className={`${selectedCarton?.id === carton.id ? 'bg-slate-800/30' : ''}`}
+                >
+                  <div className="flex justify-between items-start">
+                    <div className="flex-1">
+                      <div className="flex items-center gap-3 mb-1">
+                        <Box className="w-5 h-5 text-emerald-400" />
+                        <div>
+                          <p className="text-sm font-semibold text-white">{carton.id}</p>
+                          {carton.location ? (
+                            <p className="text-xs text-slate-400 truncate">{carton.location}</p>
+                          ) : (
+                            <p className="text-xs text-slate-400 italic">No location set</p>
+                          )}
+                        </div>
+                      </div>
+                      <div className="text-xs text-slate-500">
+                        Created: {new Date(carton.created_at).toLocaleString()}
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2 text-xs">
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setEditLocation(carton.location || '');
+                          setEditing(true);
+                        }}
+                        className="p-1 rounded hover:bg-emerald-500/20 text-emerald-400"
+                      >
+                        <Edit className="w-3 h-3" />
+                      </button>
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          if (window.confirm('Delete this carton?')) {
+                            handleDeleteCarton(carton.id);
+                          }
+                        }}
+                        className="p-1 rounded hover:bg-red-500/20 text-red-400"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Edit Carton Form */}
+      {selectedCarton && editing && (
+        <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 mt-6">
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="text-lg font-bold text-white">Edit Carton</h3>
+            <button
+              onClick={() => setEditing(false)}
+              className="p-1 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div>
+              <label className="text-[11px] font-bold text-slate-400 uppercase tracking-wider block mb-1">
+                Location
+              </label>
+              <input
+                type="text"
+                value={editLocation}
+                onChange={(e) => setEditLocation(e.target.value)}
+                placeholder="e.g., Aisle 1, Shelf 2"
+                className="w-full px-3 py-2 bg-slate-950 border border-slate-800 rounded-lg text-white text-xs focus:outline-none focus:border-emerald-500"
+              />
+            </div>
+            <div className="flex items-end">
+              <button
+                onClick={handleUpdateCarton}
+                disabled={editing || !editLocation.trim()}
+                className="w-full px-5 py-2 rounded-xl bg-emerald-500 text-slate-950 font-black text-xs hover:bg-emerald-400 transition flex items-center justify-center gap-2 disabled:opacity-50"
+              >
+                {editing ? 'Updating...' : 'Save Changes'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Selected Carton Products */}
+      {selectedCarton && (
+        <div className="mt-6">
+          <div className="bg-slate-900 border border-slate-800 rounded-2xl">
+            <div className="px-6 py-4 border-b border-slate-800 flex items-center justify-between">
+              <h3 className="text-lg font-bold text-white">
+                Products in Carton {selectedCarton.id}
+              </h3>
+              <div className="flex items-center gap-3">
+                <button
+                  onClick={handleScanProduct}
+                  className="px-4 py-2 rounded-xl bg-emerald-500 text-slate-950 font-black text-xs hover:bg-emerald-400 transition flex items-center gap-2"
+                >
+                  Scan Product to Add
+                </button>
+                <button
+                  onClick={() => {
+                    setSelectedCarton(null);
+                    setProducts([]);
+                  }}
+                  className="px-4 py-2 rounded-xl bg-slate-800 text-slate-300 font-bold text-xs hover:bg-slate-700 transition"
+                >
+                  Clear Selection
+                </button>
+              </div>
+            </div>
+            <div className="overflow-y-auto max-h-[500px]">
+              {loading ? (
+                <div className="text-center py-8">
+                  <Loader2 className="w-8 h-8 animate-spin mx-auto mb-2" />
+                  <p className="text-sm text-slate-400">Loading products...</p>
+                </div>
+              ) : products.length === 0 ? (
+                <div className="text-center py-8">
+                  <p className="text-sm text-slate-400">
+                    No products in this carton. Scan a product to add it.
+                  </p>
+                </div>
+              ) : (
+                <div className="divide-y divide-slate-800/60">
+                  {products.map((product) => (
+                    <div key={product.id} className="px-6 py-4 hover:bg-slate-800/40 transition">
+                      <div className="flex justify-between items-start">
+                        <div className="flex-1">
+                          <div className="flex items-center gap-3 mb-2">
+                            <Package className="w-5 h-5 text-emerald-400" />
+                            <div>
+                              <p className="text-sm font-semibold text-white">{product.product_name}</p>
+                              <div className="flex flex-wrap gap-2 mt-1">
+                                {product.sku && (
+                                  <span className="px-2 py-0.5 rounded text-[9px] font-mono text-slate-400 bg-slate-800/20">
+                                    SKU: {product.sku}
+                                  </span>
+                                )}
+                                {product.qr_code && (
+                                  <span className="px-2 py-0.5 rounded text-[9px] font-mono text-blue-400 bg-slate-800/20">
+                                    QR: {product.qr_code}
+                                  </span>
+                                )}
+                                {product.barcode && (
+                                  <span className="px-2 py-0.5 rounded text-[9px] font-mono text-slate-400 bg-slate-800/20">
+                                    Barcode: {product.barcode}
+                                  </span>
+                                )}
+                              </div>
+                            </div>
+                          </div>
+                          <div className="text-xs text-slate-500">
+                            Status:
+                            <span className={`px-1 py-0.5 rounded text-[9px] ${
+                              product.status === 'In Stock'
+                                ? 'bg-emerald-500/20 text-emerald-400'
+                                : product.status === 'Reserved'
+                                  ? 'bg-amber-500/20 text-amber-400'
+                                  : 'bg-red-500/20 text-red-400'
+                            }`}>
+                              {product.status}
+                            </span>
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-2 text-xs">
+                          {product.carton_id === selectedCarton.id ? (
+                            <>
+                              <button
+                                onClick={() => handleRemoveProduct(product.id)}
+                                className="p-1 rounded hover:bg-red-500/20 text-red-400"
+                              >
+                                <X className="w-3 h-3" />
+                              </button>
+                            </>
+                          ) : (
+                            <>
+                              <button
+                                onClick={() => handleAssignProduct(product.id)}
+                                className="p-1 rounded hover:bg-emerald-500/20 text-emerald-400"
+                              >
+                                <Check className="w-3 h-3" />
+                              </button>
+                            </>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+
+      {/* Scanner Modal */}
+      {isScannerOpen && (
+        <Scanner
+          isOpen={isScannerOpen}
+          onClose={handleProductScanCancel}
+          onConfirm={handleProductScanComplete}
+          order={{
+            id: 'SCAN-TO-CARTON',
+            date: new Date().toISOString(),
+            customer: {
+              name: 'Scanner',
+              phone: '',
+              addressLine: '',
+              city: '',
+              district: '',
+              state: '',
+              pinCode: ''
+            },
+            item: {
+              productName: 'Temporary',
+              sku: 'TEMP',
+              quantity: 1,
+              weightKg: 0.5
+            },
+            courier: 'Delhivery' as CourierName,
+            paymentType: 'COD' as PaymentType,
+            codAmount: 0,
+            status: 'Pending' as OrderStatus,
+            createdAt: new Date().toISOString()
+        />
+      )}
+    </div>
+  );

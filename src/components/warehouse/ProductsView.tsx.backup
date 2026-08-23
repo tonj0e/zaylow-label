@@ -1,0 +1,617 @@
+import React, { useState, useEffect } from 'react';
+import {
+  Plus, Trash2, Edit, Loader2, Check, X,
+  Box, Package, ClipboardList,
+  Search, CheckCircle, AlertTriangle, Barcode
+} from 'lucide-react';
+import { DataService } from '../../services/dataService';
+import { Scanner } from './Scanner';
+import type { CourierName, PaymentType, OrderStatus } from '../../types';
+
+interface Product {
+  id: string;
+  sku: string;
+  qr_code: string | null;
+  barcode: string | null;
+  product_name: string;
+  status: string;
+  reserved_at: string | null;
+  order_id: string | null;
+  customer_name: string | null;
+  carton_id: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+interface Carton {
+  id: string;
+  location: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export const ProductsView = () => {
+  const [products, setProducts] = useState<Product[]>([]);
+  const [cartons, setCartons] = useState<Carton[]>([]);
+  const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
+  const [loading, setLoading] = useState<boolean>(false);
+  const [creating, setCreating] = useState<boolean>(false);
+  const [editing, setEditing] = useState<boolean>(false);
+  const [newSku, setNewSku] = useState<string>('');
+  const [newProductName, setNewProductName] = useState<string>('');
+  const [newQrCode, setNewQrCode] = useState<string>('');
+  const [newBarcode, setNewBarcode] = useState<string>('');
+  const [editSku, setEditSku] = useState<string>('');
+  const [editProductName, setEditProductName] = useState<string>('');
+  const [editQrCode, setEditQrCode] = useState<string>('');
+  const [editBarcode, setEditBarcode] = useState<string>('');
+  const [searchTerm, setSearchTerm] = useState<string>('');
+  const [filterStatus, setFilterStatus] = useState<string>('all');
+  const [isScannerOpen, setIsScannerOpen] = useState<boolean>(false);
+  const [scannedProductId, setScannedProductId] = useState<string>('');
+
+  useEffect(() => {
+    loadProducts();
+    loadCartons();
+  }, []);
+
+  const loadProducts = async () => {
+    setLoading(true);
+    try {
+      const data = await DataService.getProducts();
+      setProducts(data);
+    } catch (err) {
+      console.error('Failed to load products:', err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const loadCartons = async () => {
+    try {
+      const data = await DataService.getCartons();
+      setCartons(data);
+    } catch (err) {
+      console.error('Failed to load cartons:', err);
+    }
+  };
+
+  const handleCreateProduct = async () => {
+    if (!newSku.trim() || !newProductName.trim()) return;
+    setCreating(true);
+    try {
+      const product = await DataService.updateProduct('', {
+        sku: newSku.trim(),
+        product_name: newProductName.trim(),
+        qr_code: newQrCode.trim() || null,
+        barcode: newBarcode.trim() || null,
+        status: 'In Stock'
+      } as any);
+      if (product) {
+        await loadProducts();
+        setNewSku('');
+        setNewProductName('');
+        setNewQrCode('');
+        setNewBarcode('');
+      }
+    } catch (err) {
+      console.error('Failed to create product:', err);
+    } finally {
+      setCreating(false);
+    }
+  };
+
+  const handleUpdateProduct = async () => {
+    if (!selectedProduct) return;
+    if (!editSku.trim() || !editProductName.trim()) return;
+    setEditing(true);
+    try {
+      const success = await DataService.updateProduct(selectedProduct.id, {
+        sku: editSku.trim(),
+        product_name: editProductName.trim(),
+        qr_code: editQrCode.trim() || null,
+        barcode: editBarcode.trim() || null
+      } as any);
+      if (success) {
+        await loadProducts();
+        setEditing(false);
+        setEditSku('');
+        setEditProductName('');
+        setEditQrCode('');
+        setEditBarcode('');
+      }
+    } catch (err) {
+      console.error('Failed to update product:', err);
+    } finally {
+      setEditing(false);
+    }
+  };
+
+  const handleDeleteProduct = async (id: string) => {
+    if (!window.confirm('Are you sure you want to delete this product?')) return;
+    setLoading(true);
+    try {
+      const success = await DataService.deleteProduct(id);
+      if (success) {
+        await loadProducts();
+        if (selectedProduct?.id === id) {
+          setSelectedProduct(null);
+        }
+      }
+    } catch (err) {
+      console.error('Failed to delete product:', err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleSelectProduct = (product: Product) => {
+    setSelectedProduct(product);
+    setEditSku(product.sku);
+    setEditProductName(product.product_name);
+    setEditQrCode(product.qr_code || '');
+    setEditBarcode(product.barcode || '');
+  };
+
+  const handleScanProduct = () => {
+    setIsScannerOpen(true);
+  };
+
+  const handleProductScanComplete = async (orderId: string, productId: string, cartonId: string) => {
+    // When scanning a product, we can show its details
+    setIsScannerOpen(false);
+    const productData = await DataService.getProductById(productId);
+    if (productData) {
+      setSelectedProduct(productData);
+      setEditSku(productData.sku);
+      setEditProductName(productData.product_name);
+      setEditQrCode(productData.qr_code || '');
+      setEditBarcode(productData.barcode || '');
+    }
+  };
+
+  const handleProductScanCancel = () => {
+    setIsScannerOpen(false);
+    setScannedProductId('');
+  };
+
+  const filteredProducts = products.filter(product => {
+    const matchesSearch = product.sku.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      product.product_name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      (product.qr_code && product.qr_code.toLowerCase().includes(searchTerm.toLowerCase())) ||
+      (product.barcode && product.barcode.toLowerCase().includes(searchTerm.toLowerCase()));
+
+    const matchesStatus = filterStatus === 'all' || product.status === filterStatus;
+
+    return matchesSearch && matchesStatus;
+  });
+
+  return (
+    <div className="p-6 space-y-6">
+      <div className="flex flex-col md:flex-row md:items-center md:justify-between">
+        <div>
+          <h2 className="text-2xl font-black text-white tracking-tight">
+            Products Management
+          </h2>
+          <p className="text-xs text-slate-400">
+            Manage individual products, SKUs, QR codes, and barcodes
+          </p>
+        </div>
+        <div className="flex items-center gap-4 md:ml-auto">
+          <input
+            type="text"
+            placeholder="Search products..."
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+            className="w-48 md:w-64 px-3 py-2 bg-slate-950 border border-slate-800 rounded-lg text-white font-mono text-xs focus:outline-none focus:border-emerald-500"
+          />
+          <select
+            value={filterStatus}
+            onChange={(e) => setFilterStatus(e.target.value)}
+            className="px-3 py-2 bg-slate-950 border border-slate-800 rounded-lg text-white text-xs focus:outline-none focus:border-emerald-500"
+          >
+            <option value="all">All Status</option>
+            <option value="In Stock">In Stock</option>
+            <option value="Reserved">Reserved</option>
+            <option value="Packed">Packed</option>
+            <option value="Shipped">Shipped</option>
+            <option value="Delivered">Delivered</option>
+          </select>
+          <button
+            onClick={() => {
+              setSelectedProduct(null);
+              setEditSku('');
+              setEditProductName('');
+              setEditQrCode('');
+              setEditBarcode('');
+            }}
+            className="px-4 py-2 rounded-xl bg-slate-800 text-slate-300 font-bold text-xs hover:bg-slate-700 transition"
+          >
+            Clear Selection
+          </button>
+        </div>
+      </div>
+
+      {/* Create Product Form */}
+      <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6">
+        <div className="flex items-center justify-between mb-4">
+          <h3 className="text-lg font-bold text-white">Create New Product</h3>
+          {creating && (
+            <Loader2 className="w-4 h-4 animate-spin" />
+          )}
+        </div>
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+          <div>
+            <label className="text-[11px] font-bold text-slate-400 uppercase tracking-wider block mb-1">
+              SKU
+            </label>
+            <input
+              type="text"
+              value={newSku}
+              onChange={(e) => setNewSku(e.target.value)}
+              placeholder="e.g., ZYL-TSH-BLK"
+              className="w-full px-3 py-2 bg-slate-950 border border-slate-800 rounded-lg text-white text-xs focus:outline-none focus:border-emerald-500"
+            />
+          </div>
+          <div>
+            <label className="text-[11px] font-bold text-slate-400 uppercase tracking-wider block mb-1">
+              Product Name
+            </label>
+            <input
+              type="text"
+              value={newProductName}
+              onChange={(e) => setNewProductName(e.target.value)}
+              placeholder="e.g., Black T-Shirt"
+              className="w-full px-3 py-2 bg-slate-950 border border-slate-800 rounded-lg text-white text-xs focus:outline-none focus:border-emerald-500"
+            />
+          </div>
+          <div>
+            <label className="text-[11px] font-bold text-slate-400 uppercase tracking-wider block mb-1">
+              QR Code
+            </label>
+            <input
+              type="text"
+              value={newQrCode}
+              onChange={(e) => setNewQrCode(e.target.value)}
+              placeholder="Scan or enter QR"
+              className="w-full px-3 py-2 bg-slate-950 border border-slate-800 rounded-lg text-white text-xs focus:outline-none focus:border-emerald-500"
+            />
+          </div>
+          <div>
+            <label className="text-[11px] font-bold text-slate-400 uppercase tracking-wider block mb-1">
+              Barcode
+            </label>
+            <input
+              type="text"
+              value={newBarcode}
+              onChange={(e) => setNewBarcode(e.target.value)}
+              placeholder="Scan or enter barcode"
+              className="w-full px-3 py-2 bg-slate-950 border border-slate-800 rounded-lg text-white text-xs focus:outline-none focus:border-emerald-500"
+            />
+          </div>
+        </div>
+        <div className="flex items-end">
+          <button
+            onClick={handleCreateProduct}
+            disabled={creating || !newSku.trim() || !newProductName.trim()}
+            className="px-5 py-2 rounded-xl bg-emerald-500 text-slate-950 font-black text-xs hover:bg-emerald-400 transition flex items-center justify-center gap-2 disabled:opacity-50"
+          >
+            {creating ? 'Creating...' : 'Create Product'}
+          </button>
+        </div>
+        <div className="mt-4 text-xs text-slate-500">
+          Tip: Use the scanner button above to scan QR/barcodes for quick entry
+        </div>
+      </div>
+
+      {/* Products List */}
+      <div className="bg-slate-900 border border-slate-800 rounded-2xl">
+        <div className="px-6 py-4 border-b border-slate-800">
+          <h3 className="text-lg font-bold text-white">
+            Products List
+          </h3>
+        </div>
+        <div className="overflow-y-auto max-h-[400px]">
+          {loading ? (
+            <div className="text-center py-8">
+              <Loader2 className="w-8 h-8 animate-spin mx-auto mb-2" />
+              <p className="text-sm text-slate-400">Loading products...</p>
+            </div>
+          ) : filteredProducts.length === 0 ? (
+            <div className="text-center py-8">
+              <p className="text-sm text-slate-400">
+                No products found. Create a product to get started.
+              </p>
+            </div>
+          ) : (
+            <div className="divide-y divide-slate-800/60">
+              {filteredProducts.map((product) => (
+                <div key={product.id} className="px-6 py-4 hover:bg-slate-800/40 transition cursor-pointer"
+                  onClick={() => handleSelectProduct(product)}
+                  className={`${selectedProduct?.id === product.id ? 'bg-slate-800/30' : ''}`}
+                >
+                  <div className="flex justify-between items-start">
+                    <div className="flex-1">
+                      <div className="flex items-center gap-3 mb-1">
+                        <Package className="w-5 h-5 text-emerald-400" />
+                        <div>
+                          <p className="text-sm font-semibold text-white">{product.product_name}</p>
+                          <div className="flex flex-wrap gap-2 mt-1">
+                            {product.sku && (
+                              <span className="px-2 py-0.5 rounded text-[9px] font-mono text-slate-400 bg-slate-800/20">
+                                SKU: {product.sku}
+                              </span>
+                            )}
+                            {product.qr_code && (
+                              <span className="px-2 py-0.5 rounded text-[9px] font-mono text-blue-400 bg-slate-800/20">
+                                QR: {product.qr_code}
+                              </span>
+                            )}
+                            {product.barcode && (
+                              <span className="px-2 py-0.5 rounded text-[9px] font-mono text-slate-400 bg-slate-800/20">
+                                Barcode: {product.barcode}
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                      <div className="text-xs text-slate-500">
+                        Status:
+                        <span className={`px-1 py-0.5 rounded text-[9px] ${
+                          product.status === 'In Stock'
+                            ? 'bg-emerald-500/20 text-emerald-400'
+                            : product.status === 'Reserved'
+                              ? 'bg-amber-500/20 text-amber-400'
+                              : product.status === 'Packed'
+                                ? 'bg-blue-500/20 text-blue-400'
+                                : product.status === 'Shipped'
+                                  ? 'bg-purple-500/20 text-purple-400'
+                                  : product.status === 'Delivered'
+                                    ? 'bg-green-500/20 text-green-400'
+                                    : 'bg-red-500/20 text-red-400'
+                        }`}>
+                          {product.status}
+                        </span>
+                      </div>
+                      <div className="mt-1 text-xs text-slate-500">
+                        {product.carton_id ? (
+                          <span>In Carton: {product.carton_id.substring(0, 8)}...</span>
+                        ) : (
+                          <span className="italic">Not in carton</span>
+                        )}
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2 text-xs">
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setEditSku(product.sku);
+                          setEditProductName(product.product_name);
+                          setEditQrCode(product.qr_code || '');
+                          setEditBarcode(product.barcode || '');
+                          setSelectedProduct(product);
+                        }}
+                        className="p-1 rounded hover:bg-emerald-500/20 text-emerald-400"
+                      >
+                        <Edit className="w-3 h-3" />
+                      </button>
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          if (window.confirm('Delete this product?')) {
+                            handleDeleteProduct(product.id);
+                          }
+                        }}
+                        className="p-1 rounded hover:bg-red-500/20 text-red-400"
+                      >
+                        <Trash2 className="w-3 h-3" />
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Edit Product Form */}
+      {selectedProduct && editing && (
+        <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 mt-6">
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="text-lg font-bold text-white">Edit Product</h3>
+            <button
+              onClick={() => setEditing(false)}
+              className="p-1 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+            <div>
+              <label className="text-[11px] font-bold text-slate-400 uppercase tracking-wider block mb-1">
+                SKU
+              </label>
+              <input
+                type="text"
+                value={editSku}
+                onChange={(e) => setEditSku(e.target.value)}
+                placeholder="e.g., ZYL-TSH-BLK"
+                className="w-full px-3 py-2 bg-slate-950 border border-slate-800 rounded-lg text-white text-xs focus:outline-none focus:border-emerald-500"
+              />
+            </div>
+            <div>
+              <label className="text-[11px] font-bold text-slate-400 uppercase tracking-wider block mb-1">
+                Product Name
+              </label>
+              <input
+                type="text"
+                value={editProductName}
+                onChange={(e) => setEditProductName(e.target.value)}
+                placeholder="e.g., Black T-Shirt"
+                className="w-full px-3 py-2 bg-slate-950 border border-slate-800 rounded-lg text-white text-xs focus:outline-none focus:border-emerald-500"
+              />
+            </div>
+            <div>
+              <label className="text-[11px] font-bold text-slate-400 uppercase tracking-wider block mb-1">
+                QR Code
+              </label>
+              <input
+                type="text"
+                value={editQrCode}
+                onChange={(e) => setEditQrCode(e.target.value)}
+                placeholder="Scan or enter QR"
+                className="w-full px-3 py-2 bg-slate-950 border border-slate-800 rounded-lg text-white text-xs focus:outline-none focus:border-emerald-500"
+              />
+            </div>
+            <div>
+              <label className="text-[11px] font-bold text-slate-400 uppercase tracking-wider block mb-1">
+                Barcode
+              </label>
+              <input
+                type="text"
+                value={editBarcode}
+                onChange={(e) => setEditBarcode(e.target.value)}
+                placeholder="Scan or enter barcode"
+                className="w-full px-3 py-2 bg-slate-950 border border-slate-800 rounded-lg text-white text-xs focus:outline-none focus:border-emerald-500"
+              />
+            </div>
+          </div>
+          <div className="flex items-end mt-4">
+            <button
+              onClick={handleUpdateProduct}
+              disabled={editing || !editSku.trim() || !editProductName.trim()}
+              className="w-full px-5 py-2 rounded-xl bg-emerald-500 text-slate-950 font-black text-xs hover:bg-emerald-400 transition flex items-center justify-center gap-2 disabled:opacity-50"
+            >
+              {editing ? 'Updating...' : 'Save Changes'}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Selected Product Details & QR Scanner */}
+      {selectedProduct && (
+        <div className="bg-slate-900 border border-slate-800 rounded-2xl">
+          <div className="px-6 py-4 border-b border-slate-800 flex items-center justify-between">
+            <h3 className="text-lg font-bold text-white">
+              Product Details
+            </h3>
+            <div className="flex items-center gap-3">
+              <button
+                onClick={handleScanProduct}
+                className="px-4 py-2 rounded-xl bg-emerald-500 text-slate-950 font-black text-xs hover:bg-emerald-400 transition flex items-center gap-2"
+              >
+                Scan Another Product
+              </button>
+              <button
+                onClick={() => {
+                                        setSelectedProduct(null);
+                                        setEditSku('');
+                                        setEditProductName('');
+                                        setEditQrCode('');
+                                        setEditBarcode('');
+                                      }}
+                className="px-4 py-2 rounded-xl bg-slate-800 text-slate-300 font-bold text-xs hover:bg-slate-700 transition"
+              >
+                Clear Selection
+              </button>
+            </div>
+          </div>
+          <div className="p-6 space-y-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <p className="text-xs font-bold text-slate-400 uppercase tracking-wider">Product ID</p>
+                <p className="text-sm font-mono text-white truncate">{selectedProduct.id}</p>
+              </div>
+              <div>
+                <p className="text-xs font-bold text-slate-400 uppercase tracking-wider">SKU</p>
+                <p className="text-sm font-mono text-white">{selectedProduct.sku}</p>
+              </div>
+              <div>
+                <p className="text-xs font-bold text-slate-400 uppercase tracking-wider">Product Name</p>
+                <p className="text-sm font-semibold text-white">{selectedProduct.product_name}</p>
+              </div>
+              <div>
+                <p className="text-xs font-bold text-slate-400 uppercase tracking-wider">QR Code</p>
+                <p className="text-sm font-mono text-blue-400 break-all">{selectedProduct.qr_code || 'Not set'}</p>
+              </div>
+              <div>
+                <p className="text-xs font-bold text-slate-400 uppercase tracking-wider">Barcode</p>
+                <p className="text-sm font-mono text-white break-all">{selectedProduct.barcode || 'Not set'}</p>
+              </div>
+              <div>
+                <p className="text-xs font-bold text-slate-400 uppercase tracking-wider">Status</p>
+                <p className="text-sm font-semibold text-white">
+                  <span className={`px-2 py-0.5 rounded text-[9px] ${
+                    selectedProduct.status === 'In Stock'
+                      ? 'bg-emerald-500/20 text-emerald-400'
+                      : selectedProduct.status === 'Reserved'
+                        ? 'bg-amber-500/20 text-amber-400'
+                        : selectedProduct.status === 'Packed'
+                          ? 'bg-blue-500/20 text-blue-400'
+                          : selectedProduct.status === 'Shipped'
+                            ? 'bg-purple-500/20 text-purple-400'
+                            : selectedProduct.status === 'Delivered'
+                              ? 'bg-green-500/20 text-green-400'
+                              : 'bg-red-500/20 text-red-400'
+                  }`}>
+                    {selectedProduct.status}
+                  </span>
+                </p>
+              </div>
+              <div>
+                <p className="text-xs font-bold text-slate-400 uppercase tracking-wider">Carton ID</p>
+                <p className="text-sm font-mono text-white">{selectedProduct.carton_id || 'Not assigned'}</p>
+              </div>
+              <div>
+                <p className="text-xs font-bold text-slate-400 uppercase tracking-wider">Order ID</p>
+                <p className="text-sm font-mono text-white">{selectedProduct.order_id || 'Not assigned'}</p>
+              </div>
+              <div>
+                <p className="text-xs font-bold text-slate-400 uppercase tracking-wider">Customer</p>
+                <p className="text-sm font-mono text-white">{selectedProduct.customer_name || 'None'}</p>
+              </div>
+              <div>
+                <p className="text-xs font-bold text-slate-400 uppercase tracking-wider">Created At</p>
+                <p className="text-sm font-mono text-white">{new Date(selectedProduct.created_at).toLocaleString()}</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Scanner Modal */}
+      {isScannerOpen && (
+        <Scanner
+          isOpen={isScannerOpen}
+          onClose={handleProductScanCancel}
+          onConfirm={handleProductScanComplete}
+          order={{
+            id: 'SCAN-PRODUCT',
+            date: new Date().toISOString(),
+            customer: {
+              name: 'Scanner',
+              phone: '',
+              addressLine: '',
+              city: '',
+              district: '',
+              state: '',
+              pinCode: ''
+            },
+            item: {
+              productName: 'Temporary',
+              sku: 'TEMP',
+              quantity: 1,
+              weightKg: 0.5
+            },
+            courier: 'Delhivery' as CourierName,
+            paymentType: 'COD' as PaymentType,
+            codAmount: 0,
+            status: 'Pending' as OrderStatus,
+            createdAt: new Date().toISOString()
+          }}
+        />
+      )}
+    </div>
+  );
+};

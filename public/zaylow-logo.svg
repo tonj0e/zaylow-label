@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 240" fill="none">
+  <!-- Black square background -->
+  <rect x="20" y="10" width="160" height="160" rx="8" fill="black"/>
+
+  <!-- White pinwheel / 4-petal flower shape inside the square -->
+  <!-- Top-left petal -->
+  <path d="M100 85 C100 85 100 60 80 50 C60 40 42 58 52 78 C62 98 85 95 100 85Z" fill="white"/>
+  <!-- Top-right petal -->
+  <path d="M115 100 C115 100 140 100 150 80 C160 60 142 42 122 52 C102 62 105 85 115 100Z" fill="white"/>
+  <!-- Bottom-right petal -->
+  <path d="M100 115 C100 115 100 140 120 150 C140 160 158 142 148 122 C138 102 115 105 100 115Z" fill="white"/>
+  <!-- Bottom-left petal -->
+  <path d="M85 100 C85 100 60 100 50 120 C40 140 58 158 78 148 C98 138 95 115 85 100Z" fill="white"/>
+
+  <!-- ZAYLOW text below -->
+  <text x="100" y="220" font-family="Arial, Helvetica, sans-serif" font-size="30" font-weight="900" letter-spacing="6" text-anchor="middle" fill="black">ZAYLOW</text>
+</svg>

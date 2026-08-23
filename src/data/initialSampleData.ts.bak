@@ -1,0 +1,352 @@
+import type { Order, CompanySettings, IntegrationConfig } from '../types';
+
+export const INITIAL_SETTINGS: CompanySettings = {
+  companyName: 'ZAYLOW',
+  tagline: 'Premium Lifestyle & Fashion',
+  logoUrl: '/zaylow-logo.png',
+  warehouse: {
+    companyName: 'ZAYLOW Fulfillment Hub 01',
+    contactPerson: 'Zaylow Logistics Desk',
+    phone: '+91 98765 43210',
+    addressLine: 'Plot 42, Phase 3, Udyog Vihar, Sector 19',
+    city: 'Gurugram',
+    state: 'Haryana',
+    pinCode: '122016',
+    gstin: '07AAAAA0000A1Z5'
+  },
+  defaultCourier: 'Delhivery',
+  defaultPaymentType: 'COD',
+  paperSize: '100x150mm',
+  dpi: 300,
+  darkThermalPrintMode: false,
+  autoMarkPrintedOnPrint: true,
+};
+
+export const INITIAL_INTEGRATIONS: IntegrationConfig[] = [
+  {
+    id: 'int-1',
+    name: 'Shopify Store',
+    platform: 'Shopify',
+    logo: 'https://cdn.iconscout.com/icon/free/png-256/free-shopify-logo-icon-download-in-svg-png-gif-file-formats--social-media-pack-logos-icons-3215386.png',
+    connected: true,
+    apiKey: 'shpat_a8f93e2b109c4d8e721a',
+    lastSync: '2026-07-26 19:45:00',
+    status: 'active'
+  },
+  {
+    id: 'int-2',
+    name: 'WooCommerce Store',
+    platform: 'WooCommerce',
+    logo: 'https://cdn.iconscout.com/icon/free/png-256/free-woocommerce-logo-icon-download-in-svg-png-gif-file-formats--technology-social-media-company-brand-vol-7-pack-logos-icons-3030308.png',
+    connected: true,
+    apiKey: 'ck_7b9d2e1a5f4c8b3d2e1a',
+    lastSync: '2026-07-26 18:30:00',
+    status: 'active'
+  },
+  {
+    id: 'int-3',
+    name: 'Shiprocket API',
+    platform: 'Shiprocket',
+    logo: 'https://www.shiprocket.in/wp-content/uploads/2021/04/shiprocket-logo.png',
+    connected: true,
+    apiKey: 'sr_live_9982314a8b7c6d',
+    lastSync: '2026-07-26 20:10:00',
+    status: 'active'
+  },
+  {
+    id: 'int-4',
+    name: 'Delhivery Direct API',
+    platform: 'Delhivery',
+    logo: 'https://www.delhivery.com/static/images/delhivery-logo.svg',
+    connected: true,
+    apiKey: 'del_token_48291047291',
+    lastSync: '2026-07-26 19:00:00',
+    status: 'active'
+  },
+  {
+    id: 'int-5',
+    name: 'Amazon Seller Flex',
+    platform: 'Amazon',
+    logo: 'https://pngimg.com/uploads/amazon/amazon_PNG11.png',
+    connected: false,
+    status: 'inactive'
+  },
+  {
+    id: 'int-6',
+    name: 'Flipkart Seller Hub',
+    platform: 'Flipkart',
+    logo: 'https://upload.wikimedia.org/wikipedia/commons/1/13/Flipkart_logo.png',
+    connected: false,
+    status: 'inactive'
+  },
+  {
+    id: 'int-7',
+    name: 'Meesho Supplier Panel',
+    platform: 'Meesho',
+    logo: 'https://supplier.meesho.com/images/meesho-logo-v2.png',
+    connected: false,
+    status: 'inactive'
+  },
+  {
+    id: 'int-8',
+    name: 'DTDC Direct API',
+    platform: 'DTDC',
+    logo: 'https://www.dtdc.in/img/dtdc-logo.png',
+    connected: false,
+    status: 'inactive'
+  }
+];
+
+export const INITIAL_ORDERS: Order[] = [
+  {
+    id: 'ZYL-908101',
+    customer: {
+      name: 'Aarav Sharma',
+      phone: '+91 98112 34567',
+      addressLine: 'Flat 402, Sunshine Apartments, Near HDFC Bank, MG Road',
+      landmark: 'Opposite Central Mall',
+      city: 'Bengaluru',
+      district: 'Bengaluru Urban',
+      state: 'Karnataka',
+      pinCode: '560001'
+    },
+    item: {
+      productName: 'ZAYLOW Urban Oversized Heavyweight Cotton Hoodie - Jet Black (L)',
+      sku: 'ZYL-HOOD-BLK-L',
+      quantity: 1,
+      weightKg: 0.65
+    },
+    courier: 'Delhivery',
+    paymentType: 'COD',
+    codAmount: 1899,
+    status: 'Pending',
+    createdAt: '2026-07-26T18:30:00.000Z'
+  },
+  {
+    id: 'ZYL-908102',
+    customer: {
+      name: 'Priya Mukherjee',
+      phone: '+91 97480 12345',
+      addressLine: 'House No. 18B, Salt Lake Sector III, Block CL',
+      landmark: 'Near Karunamoyee Bus Terminal',
+      city: 'Kolkata',
+      district: 'North 24 Parganas',
+      state: 'West Bengal',
+      pinCode: '700091'
+    },
+    item: {
+      productName: 'ZAYLOW Signature Italian Leather Sling Bag - Tan',
+      sku: 'ZYL-BAG-TAN-01',
+      quantity: 1,
+      weightKg: 0.45
+    },
+    courier: 'DTDC',
+    paymentType: 'Prepaid',
+    codAmount: 0,
+    status: 'Label Generated',
+    createdAt: '2026-07-26T17:15:00.000Z'
+  },
+  {
+    id: 'ZYL-908103',
+    customer: {
+      name: 'Vikramaditya Verma',
+      phone: '+91 99887 65432',
+      addressLine: 'Bungalow 7, Coral Crest Residency, Koregaon Park Annexe',
+      landmark: 'Behind German Bakery',
+      city: 'Pune',
+      district: 'Pune',
+      state: 'Maharashtra',
+      pinCode: '411001'
+    },
+    item: {
+      productName: 'ZAYLOW Waterproof Minimalist Watch - Obsidian Edition',
+      sku: 'ZYL-WCH-OBS-01',
+      quantity: 2,
+      weightKg: 0.35
+    },
+    courier: 'Delhivery',
+    paymentType: 'COD',
+    codAmount: 3499,
+    status: 'Printed',
+    createdAt: '2026-07-26T16:00:00.000Z',
+    printedAt: '2026-07-26T17:30:00.000Z'
+  },
+  {
+    id: 'ZYL-908104',
+    customer: {
+      name: 'Sneha Reddy',
+      phone: '+91 94400 98765',
+      addressLine: 'Plot 120, Road No. 36, Jubilee Hills',
+      landmark: 'Near Peddamma Temple Metro Station',
+      city: 'Hyderabad',
+      district: 'Hyderabad',
+      state: 'Telangana',
+      pinCode: '500033'
+    },
+    item: {
+      productName: 'ZAYLOW Luxe Silk Slip Dress - Champagne (M)',
+      sku: 'ZYL-DRS-CHM-M',
+      quantity: 1,
+      weightKg: 0.28
+    },
+    courier: 'Shiprocket',
+    paymentType: 'Prepaid',
+    codAmount: 0,
+    status: 'Shipped',
+    createdAt: '2026-07-25T14:20:00.000Z',
+    printedAt: '2026-07-25T16:00:00.000Z',
+    trackingNumber: 'SR998124501IN'
+  },
+  {
+    id: 'ZYL-908105',
+    customer: {
+      name: 'Rajesh Kumar Patel',
+      phone: '+91 98250 54321',
+      addressLine: 'Flat 304, Green Heights, CG Road, Navrangpura',
+      landmark: 'Opposite Swastik Char Rasta',
+      city: 'Ahmedabad',
+      district: 'Ahmedabad',
+      state: 'Gujarat',
+      pinCode: '380009'
+    },
+    item: {
+      productName: 'ZAYLOW Pure Linen Breathable Shirt - Olive Green (XL)',
+      sku: 'ZYL-SHT-OLV-XL',
+      quantity: 3,
+      weightKg: 0.72
+    },
+    courier: 'India Post',
+    paymentType: 'COD',
+    codAmount: 2799,
+    status: 'Pending',
+    createdAt: '2026-07-26T19:10:00.000Z'
+  },
+  {
+    id: 'ZYL-908106',
+    customer: {
+      name: 'Ananya Iyer',
+      phone: '+91 98401 22334',
+      addressLine: 'Door 45/2, 2nd Main Road, R.A. Puram',
+      landmark: 'Near Sangeetha Hotel',
+      city: 'Chennai',
+      district: 'Chennai',
+      state: 'Tamil Nadu',
+      pinCode: '600028'
+    },
+    item: {
+      productName: 'ZAYLOW Handcrafted Ceramic Espresso Cup Set (Pack of 4)',
+      sku: 'ZYL-HOM-CUP-04',
+      quantity: 1,
+      weightKg: 1.20
+    },
+    courier: 'Bluedart',
+    paymentType: 'Prepaid',
+    codAmount: 0,
+    status: 'Pending',
+    createdAt: '2026-07-26T19:30:00.000Z'
+  },
+  {
+    id: 'ZYL-908107',
+    customer: {
+      name: 'Mohit Chawla',
+      phone: '+91 98140 88990',
+      addressLine: 'House 1421, Sector 34-D',
+      landmark: 'Near Furniture Market',
+      city: 'Chandigarh',
+      district: 'Chandigarh',
+      state: 'Punjab',
+      pinCode: '160022'
+    },
+    item: {
+      productName: 'ZAYLOW Polarized Matte Sunglasses - Aviator Black',
+      sku: 'ZYL-SUN-AV-BLK',
+      quantity: 1,
+      weightKg: 0.20
+    },
+    courier: 'NimbusPost',
+    paymentType: 'COD',
+    codAmount: 1499,
+    status: 'Pending',
+    createdAt: '2026-07-26T19:50:00.000Z'
+  },
+  {
+    id: 'ZYL-908108',
+    customer: {
+      name: 'Divya Nair',
+      phone: '+91 94470 33445',
+      addressLine: 'TC 14/890, Kowdiar Gardens, Jawahar Nagar',
+      landmark: 'Near Raj Bhavan Gate',
+      city: 'Thiruvananthapuram',
+      district: 'Thiruvananthapuram',
+      state: 'Kerala',
+      pinCode: '695003'
+    },
+    item: {
+      productName: 'ZAYLOW Organic Cotton Tote Bag - Natural Beige',
+      sku: 'ZYL-TOT-BEI-01',
+      quantity: 2,
+      weightKg: 0.40
+    },
+    courier: 'Delhivery',
+    paymentType: 'Prepaid',
+    codAmount: 0,
+    status: 'Pending',
+    createdAt: '2026-07-26T20:05:00.000Z'
+  }
+];
+
+// Generate 50 realistic demo orders programmatically to support large-scale search, pagination & testing
+const sampleNames = ['Rohan Das', 'Kavita Singh', 'Harish Malhotra', 'Meera Joshi', 'Siddharth Rao', 'Deepak Chauhan', 'Shruti Saxena', 'Karan Gupta', 'Pooja Agarwal', 'Manish Pandit', 'Neha Sen', 'Rahul Deshmukh', 'Tarun Bansal', 'Shweta Kulkarni', 'Saurabh Tandon'];
+const sampleCities = [
+  { city: 'Mumbai', state: 'Maharashtra', pin: '400001', district: 'Mumbai' },
+  { city: 'Jaipur', state: 'Rajasthan', pin: '302001', district: 'Jaipur' },
+  { city: 'Lucknow', state: 'Uttar Pradesh', pin: '226001', district: 'Lucknow' },
+  { city: 'Indore', state: 'Madhya Pradesh', pin: '452001', district: 'Indore' },
+  { city: 'Surat', state: 'Gujarat', pin: '395001', district: 'Surat' },
+  { city: 'Coimbatore', state: 'Tamil Nadu', pin: '641001', district: 'Coimbatore' },
+  { city: 'Nagpur', state: 'Maharashtra', pin: '440001', district: 'Nagpur' },
+  { city: 'Patna', state: 'Bihar', pin: '800001', district: 'Patna' }
+];
+
+const sampleProducts = [
+  { name: 'ZAYLOW Wireless Noise Canceling Headphones', sku: 'ZYL-AUD-ANC-01', price: 4999, w: 0.5 },
+  { name: 'ZAYLOW Active Stretch Cargo Joggers - Camo (M)', sku: 'ZYL-JOG-CAM-M', price: 2199, w: 0.48 },
+  { name: 'ZAYLOW Smart Fitness Band 5 Pro', sku: 'ZYL-FIT-BND-05', price: 2999, w: 0.22 },
+  { name: 'ZAYLOW Merino Wool Knit Beanie - Charcoal', sku: 'ZYL-HAT-WOL-CHA', price: 899, w: 0.15 },
+  { name: 'ZAYLOW Ergonomic Laptop Stand - Anodized Gray', sku: 'ZYL-ACC-LAP-ST', price: 1799, w: 0.85 }
+];
+
+const couriersList: ('Delhivery' | 'DTDC' | 'India Post' | 'Shiprocket' | 'NimbusPost' | 'Bluedart')[] = ['Delhivery', 'DTDC', 'India Post', 'Shiprocket', 'NimbusPost', 'Bluedart'];
+
+for (let i = 109; i <= 150; i++) {
+  const name = sampleNames[i % sampleNames.length];
+  const loc = sampleCities[i % sampleCities.length];
+  const prod = sampleProducts[i % sampleProducts.length];
+  const isCod = i % 2 === 0;
+  const courier = couriersList[i % couriersList.length];
+
+  INITIAL_ORDERS.push({
+    id: `ZYL-908${i}`,
+    customer: {
+      name: `${name} ${i}`,
+      phone: `+91 98${Math.floor(10000000 + Math.random() * 90000000)}`,
+      addressLine: `Plot ${10 + i}, Sector ${i % 30 + 1}, Main Market Road`,
+      landmark: `Near City Landmark ${i % 10 + 1}`,
+      city: loc.city,
+      district: loc.district,
+      state: loc.state,
+      pinCode: loc.pin
+    },
+    item: {
+      productName: prod.name,
+      sku: prod.sku,
+      quantity: (i % 3) + 1,
+      weightKg: Number((prod.w * ((i % 3) + 1)).toFixed(2))
+    },
+    courier,
+    paymentType: isCod ? 'COD' : 'Prepaid',
+    codAmount: isCod ? prod.price * ((i % 3) + 1) : 0,
+    status: i % 4 === 0 ? 'Printed' : i % 3 === 0 ? 'Label Generated' : 'Pending',
+    createdAt: new Date(Date.now() - i * 3600 * 1000).toISOString()
+  });
+}
