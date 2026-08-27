@@ -1,8 +1,9 @@
 import React, { useState, useEffect, useRef } from 'react';
 import {
   Undo2, CheckCircle, XCircle, Loader2, AlertTriangle, Search,
-  Package, User, Tag, RefreshCw
+  Package, User, Tag, RefreshCw, ScanLine
 } from 'lucide-react';
+import { ScannerDisplay } from './ScannerDisplay';
 import { DataService } from '../../services/dataService';
 import { supabase } from '../../services/supabase';
 
@@ -42,6 +43,7 @@ export const ReturnsView = () => {
   const [message, setMessage] = useState('');
   const [foundOrder, setFoundOrder] = useState<any>(null);
   const [isSearching, setIsSearching] = useState(false);
+  const [showScanner, setShowScanner] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -65,14 +67,28 @@ export const ReturnsView = () => {
     return `${d.getUTCFullYear()}-W${String(weekNo).padStart(2, '0')}`;
   };
 
-  const handleSearch = async () => {
-    if (!orderId.trim()) return;
+  const handleSearch = async (scanValue?: string) => {
+    let raw = (typeof scanValue === 'string' ? scanValue : orderId).trim();
+    if (!raw) return;
+    
+    // Check if the scanned value is a JSON string (from shipping label QR)
+    try {
+      if (raw.startsWith('{') && raw.endsWith('}')) {
+        const parsed = JSON.parse(raw);
+        if (parsed && parsed.id) {
+          raw = parsed.id;
+          setOrderId(raw); // Update the input field to show just the ID
+        }
+      }
+    } catch {
+      // Not a valid JSON string, continue with the raw string
+    }
+
     setIsSearching(true);
     setFoundOrder(null);
     setMessage('');
     try {
       const orders = await DataService.getOrders();
-      const raw = orderId.trim();
 
       // Normalise the input — try multiple formats:
       // "#406419" → strip # → "406419"
@@ -243,7 +259,16 @@ export const ReturnsView = () => {
                   className="flex-1 px-3 py-2.5 bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-700 rounded-xl text-black dark:text-white text-sm font-mono focus:outline-none focus:border-amber-500 focus:ring-1 focus:ring-amber-500/30 transition"
                 />
                 <button
-                  onClick={handleSearch}
+                  onClick={() => setShowScanner(!showScanner)}
+                  className={`px-3 py-2.5 rounded-xl text-slate-950 font-black text-xs transition flex items-center gap-1 ${
+                    showScanner ? 'bg-slate-200 dark:bg-slate-700 text-black dark:text-white' : 'bg-emerald-500 hover:bg-emerald-400'
+                  }`}
+                  title="Scan QR Code"
+                >
+                  <ScanLine className={`w-4 h-4 ${showScanner ? 'text-black dark:text-white' : 'text-slate-950'}`} />
+                </button>
+                <button
+                  onClick={() => handleSearch()}
                   disabled={!orderId.trim() || isSearching}
                   className="px-3 py-2.5 rounded-xl bg-amber-500 text-slate-950 font-black text-xs hover:bg-amber-400 transition disabled:opacity-40 flex items-center gap-1"
                 >
@@ -251,6 +276,36 @@ export const ReturnsView = () => {
                 </button>
               </div>
             </div>
+            
+            {/* Scanner Modal */}
+            {showScanner && (
+              <div className="fixed inset-0 z-50 bg-slate-50 dark:bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4 overflow-y-auto">
+                <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl w-full max-w-md mx-4 p-6 shadow-2xl space-y-4 relative">
+                  <div className="flex items-center justify-between pb-3 border-b border-slate-200 dark:border-slate-800">
+                    <div>
+                      <h2 className="text-xl font-bold text-black dark:text-white">Scan Order QR</h2>
+                      <p className="text-xs text-slate-400 dark:text-slate-500 mt-0.5">Point your camera at the tracking or order label</p>
+                    </div>
+                    <button onClick={() => setShowScanner(false)} className="p-1 flex-shrink-0 rounded-lg text-slate-400 hover:text-black dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800 transition">
+                      <XCircle className="w-6 h-6" />
+                    </button>
+                  </div>
+                  
+                  <ScannerDisplay 
+                    label="order label" 
+                    onScan={(text) => {
+                      setOrderId(text);
+                      setShowScanner(false);
+                      handleSearch(text);
+                    }} 
+                  />
+                  
+                  <button onClick={() => setShowScanner(false)} className="w-full py-2.5 rounded-xl bg-slate-100 dark:bg-slate-800 text-black dark:text-white font-bold text-sm hover:bg-slate-200 dark:hover:bg-slate-700 transition">
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            )}
 
             {/* Found Order Preview */}
             {foundOrder && (

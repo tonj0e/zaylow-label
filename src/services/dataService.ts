@@ -96,7 +96,15 @@ export class DataService {
 
     // Check if sufficient inventory exists before placing order
     try {
-      const { count, error: countError } = await anySupabase
+      // Products might already be reserved by the Scanner for this specific order
+      const { count: reservedCount } = await anySupabase
+        .from('inventory_items')
+        .select('*', { count: 'exact', head: true })
+        .eq('order_id', order.id)
+        .eq('product_name', order.item.productName)
+        .eq('status', 'Reserved');
+
+      const { count: inStockCount, error: countError } = await anySupabase
         .from('inventory_items')
         .select('*', { count: 'exact', head: true })
         .eq('product_name', order.item.productName)
@@ -104,7 +112,7 @@ export class DataService {
 
       if (countError) throw countError;
 
-      const availableStock = count || 0;
+      const availableStock = (inStockCount || 0) + (reservedCount || 0);
       if (availableStock < order.item.quantity) {
         throw new Error(`Insufficient stock for ${order.item.productName}. Available: ${availableStock}, Requested: ${order.item.quantity}`);
       }
