@@ -16,8 +16,8 @@ export const ScannerDisplay: React.FC<ScannerDisplayProps> = ({ label, onScan })
 
     const startScanner = async () => {
       try {
-        const { BrowserQRCodeReader } = await import('@zxing/browser');
-        const codeReader = new BrowserQRCodeReader();
+        const { BrowserMultiFormatReader } = await import('@zxing/browser');
+        const codeReader = new BrowserMultiFormatReader();
 
         if (!videoRef.current || !mounted) return;
 
