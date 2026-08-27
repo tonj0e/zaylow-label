@@ -65,7 +65,7 @@ export const ScannerDisplay: React.FC<ScannerDisplayProps> = ({ label, onScan })
   }
 
   return (
-    <div className="relative w-full rounded-2xl border-2 border-emerald-500/40 bg-slate-50 dark:bg-slate-950 overflow-hidden mb-4 aspect-video flex items-center justify-center">
+    <div className="relative w-full rounded-2xl border-2 border-emerald-500/40 bg-slate-50 dark:bg-slate-950 overflow-hidden mb-4 aspect-square md:aspect-video flex items-center justify-center">
       <video ref={videoRef} className="absolute inset-0 w-full h-full object-cover" playsInline muted />
       <div className="absolute inset-0 z-10 pointer-events-none">
         <div className="w-full h-full border-[40px] border-slate-950/50" />
