@@ -1,8 +1,9 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { X, Copy, Truck, MessageCircle, CheckCircle2, QrCode, Camera } from 'lucide-react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { X, Copy, Truck, MessageCircle, CheckCircle2, QrCode, Camera, Upload } from 'lucide-react';
 import type { Order } from '../../types';
 import { parseTrackingCode } from '../../utils/trackingParser';
 import { playScanSuccessSound } from '../../utils/audioFeedback';
+import { Html5Qrcode, Html5QrcodeSupportedFormats } from 'html5-qrcode';
 
 interface TrackingModalProps {
   isOpen: boolean;
@@ -19,7 +20,8 @@ export function TrackingModal({ isOpen, onClose, order, onSubmit }: TrackingModa
   const [cameraError, setCameraError] = useState<string | null>(null);
   const [scanSuccessFeedback, setScanSuccessFeedback] = useState<{ code: string } | null>(null);
 
-  const videoRef = useRef<HTMLVideoElement>(null);
+  const scannerRef = useRef<Html5Qrcode | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     if (isOpen) {
@@ -32,82 +34,159 @@ export function TrackingModal({ isOpen, onClose, order, onSubmit }: TrackingModa
     }
   }, [isOpen, order]);
 
-  // Video scanner effect when isScanning is active
-  useEffect(() => {
-    if (!isOpen || !isScanning) return;
+  // Handle successful barcode / QR detection
+  const handleSuccessfulDetection = useCallback((rawText: string) => {
+    const trimmed = rawText.trim();
+    if (!trimmed) return;
 
-    let controls: { stop: () => void } | null = null;
+    // Check if user accidentally scanned the Order's own parcel label QR code
+    if (order && (trimmed.includes(order.id) || (trimmed.startsWith('{') && trimmed.includes('id')))) {
+      setCameraError(`You scanned the parcel Order ID (${order.id}). Please point at the India Post tracking sticker!`);
+      return;
+    }
+
+    const code = parseTrackingCode(trimmed);
+    if (!code) {
+      setCameraError(`Could not extract tracking number from: ${trimmed.slice(0, 20)}`);
+      return;
+    }
+
+    // 1. Play loud POS scanner beep + vibration
+    playScanSuccessSound();
+
+    // 2. Shut off camera
+    stopCamera();
+    setIsScanning(false);
+
+    // 3. Set visual success confirmation state
+    setTrackingNumber(code);
+    setScanSuccessFeedback({ code });
+
+    // 4. Give the user clear visual feedback (850ms) then auto-submit & mark Shipped
+    setTimeout(() => {
+      onSubmit(code, null);
+    }, 850);
+  }, [order, onSubmit]);
+
+  const stopCamera = async () => {
+    if (scannerRef.current) {
+      try {
+        if (scannerRef.current.isScanning) {
+          await scannerRef.current.stop();
+        }
+        scannerRef.current.clear();
+      } catch (err) {
+        console.warn('Error stopping scanner:', err);
+      }
+      scannerRef.current = null;
+    }
+  };
+
+  // Video scanner effect using Html5Qrcode
+  useEffect(() => {
+    if (!isOpen || !isScanning) {
+      stopCamera();
+      return;
+    }
+
     let isMounted = true;
 
-    const startCamera = async () => {
+    const startScanner = async () => {
       try {
         setCameraError(null);
-        const { BrowserMultiFormatReader } = await import('@zxing/browser');
-        const { DecodeHintType, BarcodeFormat } = await import('@zxing/library');
+        // Wait for DOM node to mount
+        await new Promise(r => setTimeout(r, 120));
+        if (!isMounted) return;
 
-        const hints = new Map();
-        hints.set(DecodeHintType.POSSIBLE_FORMATS, [
-          BarcodeFormat.CODE_128,
-          BarcodeFormat.CODE_39,
-          BarcodeFormat.QR_CODE,
-          BarcodeFormat.EAN_13
-        ]);
+        const readerElem = document.getElementById('tracking-modal-qr-reader');
+        if (!readerElem) return;
 
-        const reader = new BrowserMultiFormatReader(hints, { delayBetweenScanAttempts: 250 });
-        if (!videoRef.current || !isMounted) return;
+        const scanner = new Html5Qrcode('tracking-modal-qr-reader', {
+          formatsToSupport: [
+            Html5QrcodeSupportedFormats.QR_CODE,
+            Html5QrcodeSupportedFormats.CODE_128,
+            Html5QrcodeSupportedFormats.CODE_39,
+            Html5QrcodeSupportedFormats.CODE_93,
+            Html5QrcodeSupportedFormats.EAN_13,
+            Html5QrcodeSupportedFormats.DATA_MATRIX
+          ],
+          verbose: false,
+          experimentalFeatures: {
+            useBarCodeDetectorIfSupported: true
+          }
+        });
+        scannerRef.current = scanner;
 
-        const ctrl = await reader.decodeFromConstraints(
+        await scanner.start(
+          { facingMode: 'environment' },
           {
-            video: {
-              facingMode: { ideal: 'environment' },
-              width: { ideal: 1280 },
-              height: { ideal: 720 }
+            fps: 15,
+            qrbox: (w, h) => ({
+              width: Math.min(Math.floor(w * 0.9), 360),
+              height: Math.min(Math.floor(h * 0.7), 240)
+            }),
+            aspectRatio: 1.777778
+          },
+          (decodedText) => {
+            if (isMounted) {
+              handleSuccessfulDetection(decodedText);
             }
           },
-          videoRef.current,
-          (result) => {
-            if (result && isMounted) {
-              const code = parseTrackingCode(result.getText());
-              if (code) {
-                // 1. Play loud POS scanner beep + vibration
-                playScanSuccessSound();
-                // 2. Shut off camera immediately
-                if (controls) {
-                  controls.stop();
-                  controls = null;
-                }
-                setIsScanning(false);
-                // 3. Set visual success confirmation state
-                setTrackingNumber(code);
-                setScanSuccessFeedback({ code });
-
-                // 4. Give the user clear visual feedback (850ms) then auto-submit & mark Shipped
-                setTimeout(() => {
-                  if (isMounted) {
-                    onSubmit(code, null);
-                  }
-                }, 850);
-              }
-            }
+          () => {
+            // Normal scan frame miss - ignore
           }
         );
-        controls = ctrl;
       } catch (err: unknown) {
         if (isMounted) {
           const msg = err instanceof Error ? err.message : String(err);
-          console.error('Camera error:', msg);
-          setCameraError('Camera unavailable. You can enter the tracking number manually below.');
+          console.error('Camera scanner start error:', msg);
+          setCameraError('Camera unavailable. You can enter tracking ID manually or snap a photo.');
         }
       }
     };
 
-    startCamera();
+    startScanner();
 
     return () => {
       isMounted = false;
-      if (controls) controls.stop();
+      stopCamera();
     };
-  }, [isOpen, isScanning, onSubmit]);
+  }, [isOpen, isScanning, handleSuccessfulDetection]);
+
+  // Handle image / photo file upload scan
+  const handleFileScan = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    try {
+      setCameraError(null);
+      let scanner = scannerRef.current;
+      if (!scanner) {
+        scanner = new Html5Qrcode('tracking-modal-file-reader-hidden', {
+          formatsToSupport: [
+            Html5QrcodeSupportedFormats.QR_CODE,
+            Html5QrcodeSupportedFormats.CODE_128,
+            Html5QrcodeSupportedFormats.CODE_39,
+            Html5QrcodeSupportedFormats.CODE_93,
+            Html5QrcodeSupportedFormats.EAN_13,
+            Html5QrcodeSupportedFormats.DATA_MATRIX
+          ],
+          verbose: false,
+          experimentalFeatures: {
+            useBarCodeDetectorIfSupported: true
+          }
+        });
+      }
+      const decodedText = await scanner.scanFile(file, true);
+      handleSuccessfulDetection(decodedText);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.warn('File scan error:', msg);
+      setCameraError('Could not detect barcode/QR code in the photo. Please ensure clear focus and lighting.');
+    } finally {
+      if (fileInputRef.current) fileInputRef.current.value = '';
+    }
+  };
 
   if (!isOpen || !order) return null;
 
@@ -127,7 +206,6 @@ export function TrackingModal({ isOpen, onClose, order, onSubmit }: TrackingModa
     setTimeout(() => setCopied(false), 2000);
   };
 
-  // Exact same WhatsApp URL construction as the original that worked
   const openWhatsApp = () => {
     const phone = (order.customer.phone || '').replace(/\D/g, '');
     const waPhone = phone.length === 10 ? '91' + phone : phone;
@@ -150,6 +228,9 @@ export function TrackingModal({ isOpen, onClose, order, onSubmit }: TrackingModa
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
       <div className="bg-white dark:bg-slate-900 rounded-2xl w-full max-w-md shadow-2xl border border-slate-200 dark:border-slate-800 overflow-hidden">
+
+        {/* Hidden element for file scanning */}
+        <div id="tracking-modal-file-reader-hidden" className="hidden" />
 
         {/* Header */}
         <div className="flex justify-between items-center p-4 border-b border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950">
@@ -189,35 +270,55 @@ export function TrackingModal({ isOpen, onClose, order, onSubmit }: TrackingModa
             </div>
           )}
 
-          {/* Camera Scanner Section (Toggleable) */}
+          {/* Camera Scanner View (Toggleable) */}
           {isScanning ? (
-            <div className="relative rounded-2xl bg-black overflow-hidden aspect-video border border-blue-500/40 flex items-center justify-center">
-              <video ref={videoRef} playsInline muted className="w-full h-full object-cover" />
-              <div className="absolute inset-0 pointer-events-none flex items-center justify-center p-3">
-                <div className="relative w-48 h-24 border-2 border-emerald-400 rounded-lg shadow-sm">
-                  <div className="absolute left-0 right-0 h-0.5 bg-emerald-400 animate-pulse" />
+            <div className="space-y-2">
+              <div className="relative rounded-2xl bg-black overflow-hidden border border-blue-500/40 min-h-[200px] flex items-center justify-center">
+                <div id="tracking-modal-qr-reader" className="w-full h-full" />
+                <div className="absolute top-2 right-2 z-20 flex items-center gap-1.5">
+                  <button
+                    type="button"
+                    onClick={() => fileInputRef.current?.click()}
+                    className="px-2.5 py-1 bg-black/80 hover:bg-black text-white text-[11px] font-bold rounded-lg transition border border-white/20 flex items-center gap-1 backdrop-blur-sm"
+                  >
+                    <Upload className="w-3 h-3" />
+                    <span>Snap / Upload</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setIsScanning(false)}
+                    className="px-2.5 py-1 bg-red-600/80 hover:bg-red-600 text-white text-[11px] font-bold rounded-lg transition"
+                  >
+                    Close
+                  </button>
                 </div>
               </div>
-              <div className="absolute top-2 right-2">
-                <button
-                  type="button"
-                  onClick={() => setIsScanning(false)}
-                  className="px-2.5 py-1 bg-black/70 hover:bg-black text-white text-[11px] font-bold rounded-lg transition"
-                >
-                  Close Camera
-                </button>
-              </div>
-              <div className="absolute bottom-2 text-center pointer-events-none">
-                <span className="text-[10px] font-bold px-2.5 py-0.5 rounded-full bg-black/70 text-white backdrop-blur-sm">
-                  Aim at India Post barcode or QR code
-                </span>
-              </div>
+              <p className="text-[10px] text-center text-slate-400 font-medium">
+                Aim at India Post barcode or QR code · Auto-marks as Shipped upon scan
+              </p>
             </div>
           ) : cameraError ? (
-            <div className="p-3 rounded-xl bg-amber-500/10 border border-amber-500/20 text-xs text-amber-600 dark:text-amber-400">
-              {cameraError}
+            <div className="p-3 rounded-xl bg-amber-500/10 border border-amber-500/20 text-xs text-amber-600 dark:text-amber-400 flex items-center justify-between">
+              <span>{cameraError}</span>
+              <button
+                type="button"
+                onClick={() => fileInputRef.current?.click()}
+                className="px-2.5 py-1 bg-amber-500 text-slate-950 font-bold rounded-lg text-xs shrink-0 ml-2"
+              >
+                Snap Photo
+              </button>
             </div>
           ) : null}
+
+          {/* Hidden File Input for high-res photo scan */}
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="image/*"
+            capture="environment"
+            className="hidden"
+            onChange={handleFileScan}
+          />
 
           {/* Tracking Number Input */}
           <div>
@@ -225,28 +326,38 @@ export function TrackingModal({ isOpen, onClose, order, onSubmit }: TrackingModa
               <label className="block text-xs font-bold text-black dark:text-white uppercase tracking-wider">
                 India Post Tracking Number
               </label>
-              <button
-                type="button"
-                onClick={() => setIsScanning(!isScanning)}
-                className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-bold transition ${
-                  isScanning
-                    ? 'bg-red-500/10 text-red-500 hover:bg-red-500/20'
-                    : 'bg-blue-500/10 text-blue-600 dark:text-blue-400 hover:bg-blue-500/20'
-                }`}
-              >
-                {isScanning ? (
-                  <>
-                    <X className="w-3.5 h-3.5" />
-                    <span>Cancel Scan</span>
-                  </>
-                ) : (
-                  <>
-                    <Camera className="w-3.5 h-3.5" />
-                    <QrCode className="w-3.5 h-3.5" />
-                    <span>Scan Barcode / QR</span>
-                  </>
-                )}
-              </button>
+              <div className="flex items-center gap-1.5">
+                <button
+                  type="button"
+                  onClick={() => fileInputRef.current?.click()}
+                  className="flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-bold bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-200 transition"
+                  title="Snap a photo of the tracking label"
+                >
+                  <Camera className="w-3.5 h-3.5" />
+                  <span>Snap Photo</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setIsScanning(!isScanning)}
+                  className={`flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-bold transition ${
+                    isScanning
+                      ? 'bg-red-500/10 text-red-500 hover:bg-red-500/20'
+                      : 'bg-blue-500/10 text-blue-600 dark:text-blue-400 hover:bg-blue-500/20'
+                  }`}
+                >
+                  {isScanning ? (
+                    <>
+                      <X className="w-3.5 h-3.5" />
+                      <span>Cancel</span>
+                    </>
+                  ) : (
+                    <>
+                      <QrCode className="w-3.5 h-3.5" />
+                      <span>Live Scan</span>
+                    </>
+                  )}
+                </button>
+              </div>
             </div>
 
             <div className="relative">

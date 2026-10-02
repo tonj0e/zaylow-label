@@ -1,8 +1,9 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { X, QrCode, Truck, CheckCircle2, Search, ArrowRight, RefreshCw, AlertCircle } from 'lucide-react';
+import { X, QrCode, Truck, CheckCircle2, Search, ArrowRight, RefreshCw, AlertCircle, Upload, Camera } from 'lucide-react';
 import type { Order, OrderStatus } from '../../types';
 import { parseTrackingCode } from '../../utils/trackingParser';
 import { playScanSuccessSound, playScanErrorSound } from '../../utils/audioFeedback';
+import { Html5Qrcode, Html5QrcodeSupportedFormats } from 'html5-qrcode';
 
 interface TrackingScannerModalProps {
   isOpen: boolean;
@@ -12,8 +13,6 @@ interface TrackingScannerModalProps {
   onUpdateTracking: (id: string, trackingNumber: string, shippingLabelUrl: string | null) => void;
   initialOrder?: Order | null;
 }
-
-
 
 export const TrackingScannerModal: React.FC<TrackingScannerModalProps> = ({
   isOpen,
@@ -31,7 +30,8 @@ export const TrackingScannerModal: React.FC<TrackingScannerModalProps> = ({
   const [lastShipped, setLastShipped] = useState<{ order: Order; tracking: string } | null>(null);
   const [recentShippedList, setRecentShippedList] = useState<Array<{ orderId: string; customer: string; tracking: string; time: string }>>([]);
 
-  const videoRef = useRef<HTMLVideoElement>(null);
+  const scannerRef = useRef<Html5Qrcode | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const lastScannedTimeRef = useRef<number>(0);
 
   useEffect(() => {
@@ -128,54 +128,76 @@ export const TrackingScannerModal: React.FC<TrackingScannerModalProps> = ({
     playScanSuccessSound();
   }, [orders, selectedOrder, executeShipOrder]);
 
-  // Video scanner initialization with @zxing/browser
-  useEffect(() => {
-    if (!isOpen || !cameraActive) return;
+  const stopCamera = async () => {
+    if (scannerRef.current) {
+      try {
+        if (scannerRef.current.isScanning) {
+          await scannerRef.current.stop();
+        }
+        scannerRef.current.clear();
+      } catch (err) {
+        console.warn('Error stopping scanner:', err);
+      }
+      scannerRef.current = null;
+    }
+  };
 
-    let controls: { stop: () => void } | null = null;
+  // Video scanner initialization with Html5Qrcode
+  useEffect(() => {
+    if (!isOpen || !cameraActive) {
+      stopCamera();
+      return;
+    }
+
     let isMounted = true;
 
     const startCamera = async () => {
       try {
         setCameraError(null);
-        const { BrowserMultiFormatReader } = await import('@zxing/browser');
-        const { DecodeHintType, BarcodeFormat } = await import('@zxing/library');
+        await new Promise(r => setTimeout(r, 120));
+        if (!isMounted) return;
 
-        const hints = new Map();
-        hints.set(DecodeHintType.POSSIBLE_FORMATS, [
-          BarcodeFormat.CODE_128,
-          BarcodeFormat.CODE_39,
-          BarcodeFormat.QR_CODE,
-          BarcodeFormat.EAN_13
-        ]);
+        const readerElem = document.getElementById('quick-tracking-qr-reader');
+        if (!readerElem) return;
 
-        const reader = new BrowserMultiFormatReader(hints, { delayBetweenScanAttempts: 250 });
-
-        if (!videoRef.current || !isMounted) return;
-
-        const constraints = {
-          video: {
-            facingMode: { ideal: 'environment' },
-            width: { ideal: 1280 },
-            height: { ideal: 720 }
+        const scanner = new Html5Qrcode('quick-tracking-qr-reader', {
+          formatsToSupport: [
+            Html5QrcodeSupportedFormats.QR_CODE,
+            Html5QrcodeSupportedFormats.CODE_128,
+            Html5QrcodeSupportedFormats.CODE_39,
+            Html5QrcodeSupportedFormats.CODE_93,
+            Html5QrcodeSupportedFormats.EAN_13,
+            Html5QrcodeSupportedFormats.DATA_MATRIX
+          ],
+          verbose: false,
+          experimentalFeatures: {
+            useBarCodeDetectorIfSupported: true
           }
-        };
+        });
+        scannerRef.current = scanner;
 
-        const ctrl = await reader.decodeFromConstraints(
-          constraints,
-          videoRef.current,
-          (result, _error) => {
-            if (result && isMounted) {
-              handleCodeScanned(result.getText());
+        await scanner.start(
+          { facingMode: 'environment' },
+          {
+            fps: 15,
+            qrbox: (w, h) => ({
+              width: Math.min(Math.floor(w * 0.9), 360),
+              height: Math.min(Math.floor(h * 0.7), 240)
+            }),
+            aspectRatio: 1.777778
+          },
+          (decodedText) => {
+            if (isMounted) {
+              handleCodeScanned(decodedText);
             }
-          }
+          },
+          () => {}
         );
-        controls = ctrl;
       } catch (err: unknown) {
         if (isMounted) {
           const msg = err instanceof Error ? err.message : String(err);
           console.error('Camera init error:', msg);
-          setCameraError('Camera not accessible or permission denied. You can still scan with a USB barcode scanner or select order manually.');
+          setCameraError('Camera not accessible or permission denied. You can still scan with a USB barcode scanner or snap a photo.');
         }
       }
     };
@@ -184,11 +206,45 @@ export const TrackingScannerModal: React.FC<TrackingScannerModalProps> = ({
 
     return () => {
       isMounted = false;
-      if (controls) {
-        controls.stop();
-      }
+      stopCamera();
     };
   }, [isOpen, cameraActive, handleCodeScanned]);
+
+  // Handle snap photo or image upload
+  const handleFileScan = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    try {
+      setCameraError(null);
+      let scanner = scannerRef.current;
+      if (!scanner) {
+        scanner = new Html5Qrcode('quick-tracking-file-reader-hidden', {
+          formatsToSupport: [
+            Html5QrcodeSupportedFormats.QR_CODE,
+            Html5QrcodeSupportedFormats.CODE_128,
+            Html5QrcodeSupportedFormats.CODE_39,
+            Html5QrcodeSupportedFormats.CODE_93,
+            Html5QrcodeSupportedFormats.EAN_13,
+            Html5QrcodeSupportedFormats.DATA_MATRIX
+          ],
+          verbose: false,
+          experimentalFeatures: {
+            useBarCodeDetectorIfSupported: true
+          }
+        });
+      }
+      const decodedText = await scanner.scanFile(file, true);
+      handleCodeScanned(decodedText);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.warn('File scan error:', msg);
+      playScanErrorSound();
+      setCameraError('No barcode or QR code detected in this photo. Please ensure clear focus.');
+    } finally {
+      if (fileInputRef.current) fileInputRef.current.value = '';
+    }
+  };
 
   // Support USB / Bluetooth handheld barcode scanner keyboard wedges
   useEffect(() => {
@@ -318,45 +374,61 @@ export const TrackingScannerModal: React.FC<TrackingScannerModalProps> = ({
           )}
 
           {/* Camera Scanner View */}
-          <div className="relative rounded-2xl bg-black overflow-hidden border border-slate-200 dark:border-slate-800 aspect-video max-h-[220px] flex items-center justify-center shadow-inner">
+          <div className="relative rounded-2xl bg-black overflow-hidden border border-slate-200 dark:border-slate-800 min-h-[220px] flex items-center justify-center shadow-inner">
             {cameraActive && !cameraError ? (
               <>
-                <video ref={videoRef} playsInline muted className="w-full h-full object-cover" />
-                
-                {/* Aiming Reticle & Animated Scan Bar */}
-                <div className="absolute inset-0 pointer-events-none flex items-center justify-center p-4">
-                  <div className="relative w-48 sm:w-64 h-24 sm:h-28 border-2 border-emerald-400/80 rounded-xl shadow-lg">
-                    {/* Animated scanning beam */}
-                    <div className="absolute left-0 right-0 h-0.5 bg-gradient-to-r from-transparent via-emerald-400 to-transparent animate-pulse" />
-                    
-                    {/* Corner marks */}
-                    <div className="absolute -top-1 -left-1 w-3 h-3 border-t-2 border-l-2 border-emerald-400" />
-                    <div className="absolute -top-1 -right-1 w-3 h-3 border-t-2 border-r-2 border-emerald-400" />
-                    <div className="absolute -bottom-1 -left-1 w-3 h-3 border-b-2 border-l-2 border-emerald-400" />
-                    <div className="absolute -bottom-1 -right-1 w-3 h-3 border-b-2 border-r-2 border-emerald-400" />
-                  </div>
-                </div>
-
-                <div className="absolute bottom-2 left-0 right-0 text-center pointer-events-none">
-                  <span className="text-[10px] font-bold px-3 py-1 rounded-full bg-black/70 text-white backdrop-blur-sm">
-                    Aim camera at India Post tracking barcode or QR code
-                  </span>
+                <div id="quick-tracking-qr-reader" className="w-full h-full" />
+                <div className="absolute top-2 right-2 z-20 flex items-center gap-1.5">
+                  <button
+                    type="button"
+                    onClick={() => fileInputRef.current?.click()}
+                    className="px-2.5 py-1 bg-black/80 hover:bg-black text-white text-[11px] font-bold rounded-lg transition border border-white/20 flex items-center gap-1 backdrop-blur-sm"
+                  >
+                    <Camera className="w-3 h-3" />
+                    <span>Snap Photo</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setCameraActive(false)}
+                    className="px-2.5 py-1 bg-black/80 hover:bg-black text-white text-[11px] font-bold rounded-lg transition"
+                  >
+                    Pause
+                  </button>
                 </div>
               </>
             ) : (
               <div className="p-6 text-center text-slate-400 text-xs space-y-2">
                 <AlertCircle className="w-8 h-8 text-amber-500 mx-auto" />
                 <p>{cameraError || 'Camera paused.'}</p>
-                <button
-                  onClick={() => { setCameraActive(true); setCameraError(null); }}
-                  className="px-3 py-1.5 rounded-lg bg-blue-600 text-white font-bold text-xs hover:bg-blue-500 transition inline-flex items-center gap-1.5"
-                >
-                  <RefreshCw className="w-3.5 h-3.5" />
-                  <span>Retry Camera</span>
-                </button>
+                <div className="flex items-center justify-center gap-2">
+                  <button
+                    onClick={() => { setCameraActive(true); setCameraError(null); }}
+                    className="px-3 py-1.5 rounded-lg bg-blue-600 text-white font-bold text-xs hover:bg-blue-500 transition inline-flex items-center gap-1.5"
+                  >
+                    <RefreshCw className="w-3.5 h-3.5" />
+                    <span>Resume Camera</span>
+                  </button>
+                  <button
+                    onClick={() => fileInputRef.current?.click()}
+                    className="px-3 py-1.5 rounded-lg bg-slate-800 text-white font-bold text-xs hover:bg-slate-700 transition inline-flex items-center gap-1.5"
+                  >
+                    <Upload className="w-3.5 h-3.5" />
+                    <span>Upload Photo</span>
+                  </button>
+                </div>
               </div>
             )}
           </div>
+
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="image/*"
+            capture="environment"
+            className="hidden"
+            onChange={handleFileScan}
+          />
+          <div id="quick-tracking-file-reader-hidden" className="hidden" />
 
           {/* Scanned Tracking Barcode Banner (if code was read but order not confirmed yet) */}
           {scannedTracking && !selectedOrder && (

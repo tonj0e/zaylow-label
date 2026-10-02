@@ -71,3 +71,23 @@
     border-radius: 0 !important;
   }
 }
+
+/* Html5Qrcode video & viewfinder styling */
+#tracking-modal-qr-reader,
+#quick-tracking-qr-reader {
+  border: none !important;
+  background: transparent !important;
+}
+
+#tracking-modal-qr-reader video,
+#quick-tracking-qr-reader video {
+  width: 100% !important;
+  height: 100% !important;
+  object-fit: cover !important;
+  border-radius: 1rem !important;
+}
+
+#tracking-modal-qr-reader img[alt="Info icon"],
+#quick-tracking-qr-reader img[alt="Info icon"] {
+  display: none !important;
+}
