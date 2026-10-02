@@ -11,9 +11,11 @@ import {
   ChevronRight,
   Plus,
   Download,
-  Award
+  Award,
+  QrCode
 } from 'lucide-react';
 import { TrackingModal } from './TrackingModal';
+import { TrackingScannerModal } from './TrackingScannerModal';
 
 interface OrdersViewProps {
   orders: Order[];
@@ -52,6 +54,7 @@ export const OrdersView: React.FC<OrdersViewProps> = ({
   const [downloadModalOrder, setDownloadModalOrder] = useState<Order | null>(null);
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
   const [trackingOrder, setTrackingOrder] = useState<Order | null>(null);
+  const [isTrackingScannerOpen, setIsTrackingScannerOpen] = useState(false);
   const downloadLabelRef = useRef<HTMLDivElement>(null);
 
   const handleDownloadLabel = useCallback(async (order: Order) => {
@@ -199,6 +202,15 @@ export const OrdersView: React.FC<OrdersViewProps> = ({
               <span>Add All to Queue ({filteredOrders.length})</span>
             </button>
           )}
+
+          <button
+            onClick={() => setIsTrackingScannerOpen(true)}
+            className="px-4 py-2 rounded-xl bg-blue-600 text-white text-xs font-black hover:bg-blue-500 shadow-lg shadow-blue-500/20 transition flex items-center gap-2"
+            title="Scan India Post tracking QR code/barcode to automatically mark as Shipped"
+          >
+            <QrCode className="w-4 h-4" />
+            <span>Scan Tracking</span>
+          </button>
 
           <button
             onClick={onOpenOrderModal}
@@ -688,6 +700,14 @@ export const OrdersView: React.FC<OrdersViewProps> = ({
             setTrackingOrder(null);
           }
         }}
+      />
+
+      <TrackingScannerModal
+        isOpen={isTrackingScannerOpen}
+        onClose={() => setIsTrackingScannerOpen(false)}
+        orders={orders}
+        onUpdateStatus={onUpdateStatus}
+        onUpdateTracking={onUpdateTracking}
       />
     </div>
   );

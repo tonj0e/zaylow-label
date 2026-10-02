@@ -1,6 +1,7 @@
-import React, { useState, useEffect } from 'react';
-import { X, Copy, Truck, MessageCircle, CheckCircle2 } from 'lucide-react';
+import React, { useState, useEffect, useRef } from 'react';
+import { X, Copy, Truck, MessageCircle, CheckCircle2, QrCode, Camera } from 'lucide-react';
 import type { Order } from '../../types';
+import { parseTrackingCode } from '../../utils/trackingParser';
 
 interface TrackingModalProps {
   isOpen: boolean;
@@ -13,14 +14,106 @@ export function TrackingModal({ isOpen, onClose, order, onSubmit }: TrackingModa
   const [trackingNumber, setTrackingNumber] = useState('');
   const [copied, setCopied] = useState(false);
   const [sent, setSent] = useState(false);
+  const [isScanning, setIsScanning] = useState(false);
+  const [cameraError, setCameraError] = useState<string | null>(null);
+
+  const videoRef = useRef<HTMLVideoElement>(null);
 
   useEffect(() => {
     if (isOpen) {
-      setTrackingNumber('');
+      setTrackingNumber(order?.trackingNumber || '');
       setCopied(false);
       setSent(false);
+      setIsScanning(false);
+      setCameraError(null);
     }
-  }, [isOpen]);
+  }, [isOpen, order]);
+
+  // Audio chime
+  const playChime = () => {
+    try {
+      const AudioCtx = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+      const ctx = new AudioCtx();
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(880, ctx.currentTime);
+      osc.frequency.exponentialRampToValueAtTime(1320, ctx.currentTime + 0.12);
+      gain.gain.setValueAtTime(0.3, ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.18);
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start();
+      osc.stop(ctx.currentTime + 0.18);
+    } catch {
+      // Audio error ignored
+    }
+  };
+
+  // Video scanner effect when isScanning is active
+  useEffect(() => {
+    if (!isOpen || !isScanning) return;
+
+    let controls: { stop: () => void } | null = null;
+    let isMounted = true;
+
+    const startCamera = async () => {
+      try {
+        setCameraError(null);
+        const { BrowserMultiFormatReader } = await import('@zxing/browser');
+        const { DecodeHintType, BarcodeFormat } = await import('@zxing/library');
+
+        const hints = new Map();
+        hints.set(DecodeHintType.POSSIBLE_FORMATS, [
+          BarcodeFormat.CODE_128,
+          BarcodeFormat.CODE_39,
+          BarcodeFormat.QR_CODE,
+          BarcodeFormat.EAN_13
+        ]);
+        hints.set(DecodeHintType.TRY_HARDER, true);
+
+        const reader = new BrowserMultiFormatReader(hints, { delayBetweenScanAttempts: 300 });
+        if (!videoRef.current || !isMounted) return;
+
+        const ctrl = await reader.decodeFromConstraints(
+          {
+            video: {
+              facingMode: { ideal: 'environment' },
+              width: { ideal: 1280 },
+              height: { ideal: 720 }
+            }
+          },
+          videoRef.current,
+          (result) => {
+            if (result && isMounted) {
+              const code = parseTrackingCode(result.getText());
+              if (code) {
+                playChime();
+                setTrackingNumber(code);
+                setIsScanning(false);
+                // Automatically save and mark as Shipped
+                onSubmit(code, null);
+              }
+            }
+          }
+        );
+        controls = ctrl;
+      } catch (err: unknown) {
+        if (isMounted) {
+          const msg = err instanceof Error ? err.message : String(err);
+          console.error('Camera error:', msg);
+          setCameraError('Camera unavailable. You can enter the tracking number manually below.');
+        }
+      }
+    };
+
+    startCamera();
+
+    return () => {
+      isMounted = false;
+      if (controls) controls.stop();
+    };
+  }, [isOpen, isScanning, onSubmit]);
 
   if (!isOpen || !order) return null;
 
@@ -82,13 +175,68 @@ export function TrackingModal({ isOpen, onClose, order, onSubmit }: TrackingModa
           </button>
         </div>
 
-        <div className="p-5 space-y-5">
+        <div className="p-5 space-y-4">
+
+          {/* Camera Scanner Section (Toggleable) */}
+          {isScanning ? (
+            <div className="relative rounded-2xl bg-black overflow-hidden aspect-video border border-blue-500/40 flex items-center justify-center">
+              <video ref={videoRef} playsInline muted className="w-full h-full object-cover" />
+              <div className="absolute inset-0 pointer-events-none flex items-center justify-center p-3">
+                <div className="relative w-44 h-20 border-2 border-emerald-400 rounded-lg shadow-sm">
+                  <div className="absolute left-0 right-0 h-0.5 bg-emerald-400 animate-pulse" />
+                </div>
+              </div>
+              <div className="absolute top-2 right-2">
+                <button
+                  type="button"
+                  onClick={() => setIsScanning(false)}
+                  className="px-2.5 py-1 bg-black/70 hover:bg-black text-white text-[11px] font-bold rounded-lg transition"
+                >
+                  Close Camera
+                </button>
+              </div>
+              <div className="absolute bottom-2 text-center pointer-events-none">
+                <span className="text-[10px] font-bold px-2.5 py-0.5 rounded-full bg-black/70 text-white backdrop-blur-sm">
+                  Aim at India Post barcode or QR code
+                </span>
+              </div>
+            </div>
+          ) : cameraError ? (
+            <div className="p-3 rounded-xl bg-amber-500/10 border border-amber-500/20 text-xs text-amber-600 dark:text-amber-400">
+              {cameraError}
+            </div>
+          ) : null}
 
           {/* Tracking Number Input */}
           <div>
-            <label className="block text-xs font-bold text-black dark:text-white uppercase tracking-wider mb-2">
-              India Post Tracking Number
-            </label>
+            <div className="flex items-center justify-between mb-2">
+              <label className="block text-xs font-bold text-black dark:text-white uppercase tracking-wider">
+                India Post Tracking Number
+              </label>
+              <button
+                type="button"
+                onClick={() => setIsScanning(!isScanning)}
+                className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-bold transition ${
+                  isScanning
+                    ? 'bg-red-500/10 text-red-500 hover:bg-red-500/20'
+                    : 'bg-blue-500/10 text-blue-600 dark:text-blue-400 hover:bg-blue-500/20'
+                }`}
+              >
+                {isScanning ? (
+                  <>
+                    <X className="w-3.5 h-3.5" />
+                    <span>Cancel Scan</span>
+                  </>
+                ) : (
+                  <>
+                    <Camera className="w-3.5 h-3.5" />
+                    <QrCode className="w-3.5 h-3.5" />
+                    <span>Scan Barcode / QR</span>
+                  </>
+                )}
+              </button>
+            </div>
+
             <input
               type="text"
               autoFocus
