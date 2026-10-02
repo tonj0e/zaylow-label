@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { X, QrCode, Truck, CheckCircle2, Search, ArrowRight, RefreshCw, AlertCircle } from 'lucide-react';
 import type { Order, OrderStatus } from '../../types';
 import { parseTrackingCode } from '../../utils/trackingParser';
+import { playScanSuccessSound, playScanErrorSound } from '../../utils/audioFeedback';
 
 interface TrackingScannerModalProps {
   isOpen: boolean;
@@ -11,27 +12,6 @@ interface TrackingScannerModalProps {
   onUpdateTracking: (id: string, trackingNumber: string, shippingLabelUrl: string | null) => void;
   initialOrder?: Order | null;
 }
-
-// Audio chime for immediate tactile confirmation
-const playSuccessChime = () => {
-  try {
-    const AudioCtx = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
-    const ctx = new AudioCtx();
-    const osc = ctx.createOscillator();
-    const gain = ctx.createGain();
-    osc.type = 'sine';
-    osc.frequency.setValueAtTime(880, ctx.currentTime); // A5
-    osc.frequency.exponentialRampToValueAtTime(1320, ctx.currentTime + 0.12); // E6
-    gain.gain.setValueAtTime(0.3, ctx.currentTime);
-    gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.18);
-    osc.connect(gain);
-    gain.connect(ctx.destination);
-    osc.start();
-    osc.stop(ctx.currentTime + 0.18);
-  } catch {
-    // Ignore audio context restrictions
-  }
-};
 
 
 
@@ -63,7 +43,7 @@ export const TrackingScannerModal: React.FC<TrackingScannerModalProps> = ({
   const executeShipOrder = useCallback((targetOrder: Order, tracking: string) => {
     onUpdateStatus(targetOrder.id, 'Shipped');
     onUpdateTracking(targetOrder.id, tracking, null);
-    playSuccessChime();
+    playScanSuccessSound();
 
     setLastShipped({ order: targetOrder, tracking });
     setRecentShippedList(prev => [
@@ -111,14 +91,17 @@ export const TrackingScannerModal: React.FC<TrackingScannerModalProps> = ({
       const match = orders.find(o => o.id.toUpperCase() === scannedOrderId?.toUpperCase());
       if (match) {
         setSelectedOrder(match);
-        playSuccessChime();
+        playScanSuccessSound();
         return;
       }
     }
 
     // Otherwise, treat as India Post tracking barcode (e.g. CL575897302IN)
     const trackingCode = parseTrackingCode(trimmed);
-    if (!trackingCode) return;
+    if (!trackingCode) {
+      playScanErrorSound();
+      return;
+    }
 
     setScannedTracking(trackingCode);
 
@@ -142,7 +125,7 @@ export const TrackingScannerModal: React.FC<TrackingScannerModalProps> = ({
       return;
     }
 
-    playSuccessChime();
+    playScanSuccessSound();
   }, [orders, selectedOrder, executeShipOrder]);
 
   // Video scanner initialization with @zxing/browser

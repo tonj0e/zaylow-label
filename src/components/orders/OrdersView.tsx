@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useRef, useCallback } from 'react';
+import React, { useState, useMemo, useRef, useCallback, useEffect } from 'react';
 import type { Order, OrderStatus, CompanySettings } from '../../types';
 import { ThermalLabel } from '../label/ThermalLabel';
 import html2canvas from 'html2canvas';
@@ -12,7 +12,9 @@ import {
   Plus,
   Download,
   Award,
-  QrCode
+  QrCode,
+  CheckCircle2,
+  X
 } from 'lucide-react';
 import { TrackingModal } from './TrackingModal';
 import { TrackingScannerModal } from './TrackingScannerModal';
@@ -55,7 +57,16 @@ export const OrdersView: React.FC<OrdersViewProps> = ({
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
   const [trackingOrder, setTrackingOrder] = useState<Order | null>(null);
   const [isTrackingScannerOpen, setIsTrackingScannerOpen] = useState(false);
+  const [shippedToast, setShippedToast] = useState<{ orderId: string; customerName: string; trackingNumber: string } | null>(null);
   const downloadLabelRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!shippedToast) return;
+    const timer = setTimeout(() => {
+      setShippedToast(null);
+    }, 4500);
+    return () => clearTimeout(timer);
+  }, [shippedToast]);
 
   const handleDownloadLabel = useCallback(async (order: Order) => {
     // Show the modal overlay with the label
@@ -697,6 +708,11 @@ export const OrdersView: React.FC<OrdersViewProps> = ({
           if (trackingOrder) {
             onUpdateStatus(trackingOrder.id, 'Shipped');
             onUpdateTracking(trackingOrder.id, trackingNumber, shippingLabelUrl);
+            setShippedToast({
+              orderId: trackingOrder.id,
+              customerName: trackingOrder.customer.name,
+              trackingNumber: trackingNumber.toUpperCase()
+            });
             setTrackingOrder(null);
           }
         }}
@@ -707,8 +723,49 @@ export const OrdersView: React.FC<OrdersViewProps> = ({
         onClose={() => setIsTrackingScannerOpen(false)}
         orders={orders}
         onUpdateStatus={onUpdateStatus}
-        onUpdateTracking={onUpdateTracking}
+        onUpdateTracking={(id, trackingNumber, url) => {
+          onUpdateTracking(id, trackingNumber, url);
+          const target = orders.find(o => o.id === id);
+          if (target) {
+            setShippedToast({
+              orderId: id,
+              customerName: target.customer.name,
+              trackingNumber: trackingNumber.toUpperCase()
+            });
+          }
+        }}
       />
+
+      {/* Floating Scan & Shipped Success Toast Banner */}
+      {shippedToast && (
+        <div className="fixed top-6 left-1/2 -translate-x-1/2 z-[100] flex items-center gap-3.5 px-5 py-3.5 bg-slate-950 text-white rounded-2xl shadow-2xl border-2 border-emerald-500 animate-in fade-in slide-in-from-top-4 duration-300">
+          <div className="w-9 h-9 rounded-xl bg-emerald-500 text-slate-950 flex items-center justify-center font-bold shadow-md">
+            <CheckCircle2 className="w-5 h-5 stroke-[2.5]" />
+          </div>
+          <div>
+            <div className="flex items-center gap-2">
+              <span className="text-[11px] font-black uppercase tracking-wider text-emerald-400">
+                Scan Success · Order Marked as Shipped
+              </span>
+            </div>
+            <div className="text-xs font-bold text-slate-200 flex items-center gap-2 mt-0.5">
+              <span className="text-white font-black">{shippedToast.orderId}</span>
+              <span>·</span>
+              <span>{shippedToast.customerName}</span>
+              <span>·</span>
+              <span className="font-mono bg-emerald-500/20 text-emerald-300 px-2 py-0.5 rounded text-[11px] font-black border border-emerald-500/40">
+                {shippedToast.trackingNumber}
+              </span>
+            </div>
+          </div>
+          <button
+            onClick={() => setShippedToast(null)}
+            className="ml-3 p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+      )}
     </div>
   );
 };

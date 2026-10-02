@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { X, Copy, Truck, MessageCircle, CheckCircle2, QrCode, Camera } from 'lucide-react';
 import type { Order } from '../../types';
 import { parseTrackingCode } from '../../utils/trackingParser';
+import { playScanSuccessSound } from '../../utils/audioFeedback';
 
 interface TrackingModalProps {
   isOpen: boolean;
@@ -16,6 +17,7 @@ export function TrackingModal({ isOpen, onClose, order, onSubmit }: TrackingModa
   const [sent, setSent] = useState(false);
   const [isScanning, setIsScanning] = useState(false);
   const [cameraError, setCameraError] = useState<string | null>(null);
+  const [scanSuccessFeedback, setScanSuccessFeedback] = useState<{ code: string } | null>(null);
 
   const videoRef = useRef<HTMLVideoElement>(null);
 
@@ -26,29 +28,9 @@ export function TrackingModal({ isOpen, onClose, order, onSubmit }: TrackingModa
       setSent(false);
       setIsScanning(false);
       setCameraError(null);
+      setScanSuccessFeedback(null);
     }
   }, [isOpen, order]);
-
-  // Audio chime
-  const playChime = () => {
-    try {
-      const AudioCtx = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
-      const ctx = new AudioCtx();
-      const osc = ctx.createOscillator();
-      const gain = ctx.createGain();
-      osc.type = 'sine';
-      osc.frequency.setValueAtTime(880, ctx.currentTime);
-      osc.frequency.exponentialRampToValueAtTime(1320, ctx.currentTime + 0.12);
-      gain.gain.setValueAtTime(0.3, ctx.currentTime);
-      gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.18);
-      osc.connect(gain);
-      gain.connect(ctx.destination);
-      osc.start();
-      osc.stop(ctx.currentTime + 0.18);
-    } catch {
-      // Audio error ignored
-    }
-  };
 
   // Video scanner effect when isScanning is active
   useEffect(() => {
@@ -88,11 +70,24 @@ export function TrackingModal({ isOpen, onClose, order, onSubmit }: TrackingModa
             if (result && isMounted) {
               const code = parseTrackingCode(result.getText());
               if (code) {
-                playChime();
-                setTrackingNumber(code);
+                // 1. Play loud POS scanner beep + vibration
+                playScanSuccessSound();
+                // 2. Shut off camera immediately
+                if (controls) {
+                  controls.stop();
+                  controls = null;
+                }
                 setIsScanning(false);
-                // Automatically save and mark as Shipped
-                onSubmit(code, null);
+                // 3. Set visual success confirmation state
+                setTrackingNumber(code);
+                setScanSuccessFeedback({ code });
+
+                // 4. Give the user clear visual feedback (850ms) then auto-submit & mark Shipped
+                setTimeout(() => {
+                  if (isMounted) {
+                    onSubmit(code, null);
+                  }
+                }, 850);
               }
             }
           }
@@ -177,12 +172,30 @@ export function TrackingModal({ isOpen, onClose, order, onSubmit }: TrackingModa
 
         <div className="p-5 space-y-4">
 
+          {/* Scan Success Banner */}
+          {scanSuccessFeedback && (
+            <div className="rounded-2xl bg-emerald-500/10 border-2 border-emerald-500 p-5 flex flex-col items-center justify-center text-center space-y-2 animate-in zoom-in-95 duration-200 shadow-lg shadow-emerald-500/10">
+              <div className="w-12 h-12 rounded-full bg-emerald-500 text-slate-950 flex items-center justify-center shadow-lg animate-bounce">
+                <CheckCircle2 className="w-7 h-7 stroke-[2.5]" />
+              </div>
+              <div className="text-sm font-black text-emerald-600 dark:text-emerald-400 uppercase tracking-wide">
+                QR / Barcode Scanned Successfully!
+              </div>
+              <div className="font-mono text-lg font-black bg-slate-900 text-emerald-300 px-3.5 py-1 rounded-lg tracking-wider border border-emerald-500/30">
+                {scanSuccessFeedback.code}
+              </div>
+              <div className="text-xs font-bold text-slate-600 dark:text-slate-300">
+                Marking order as <span className="text-blue-500 uppercase font-extrabold">Shipped</span>...
+              </div>
+            </div>
+          )}
+
           {/* Camera Scanner Section (Toggleable) */}
           {isScanning ? (
             <div className="relative rounded-2xl bg-black overflow-hidden aspect-video border border-blue-500/40 flex items-center justify-center">
               <video ref={videoRef} playsInline muted className="w-full h-full object-cover" />
               <div className="absolute inset-0 pointer-events-none flex items-center justify-center p-3">
-                <div className="relative w-44 h-20 border-2 border-emerald-400 rounded-lg shadow-sm">
+                <div className="relative w-48 h-24 border-2 border-emerald-400 rounded-lg shadow-sm">
                   <div className="absolute left-0 right-0 h-0.5 bg-emerald-400 animate-pulse" />
                 </div>
               </div>
@@ -237,15 +250,26 @@ export function TrackingModal({ isOpen, onClose, order, onSubmit }: TrackingModa
               </button>
             </div>
 
-            <input
-              type="text"
-              autoFocus
-              placeholder="e.g. EE123456789IN"
-              value={trackingNumber}
-              onChange={(e) => setTrackingNumber(e.target.value)}
-              onKeyDown={(e) => { if (e.key === 'Enter' && trackingNumber.trim()) handleSaveAndSend(); }}
-              className="w-full px-4 py-3 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-700 rounded-xl text-black dark:text-white font-mono font-bold text-lg focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition-all uppercase"
-            />
+            <div className="relative">
+              <input
+                type="text"
+                autoFocus
+                placeholder="e.g. EE123456789IN"
+                value={trackingNumber}
+                onChange={(e) => setTrackingNumber(e.target.value)}
+                onKeyDown={(e) => { if (e.key === 'Enter' && trackingNumber.trim()) handleSaveAndSend(); }}
+                className={`w-full px-4 py-3 bg-slate-50 dark:bg-slate-950 border ${
+                  scanSuccessFeedback
+                    ? 'border-emerald-500 ring-2 ring-emerald-500/30'
+                    : 'border-slate-200 dark:border-slate-700'
+                } rounded-xl text-black dark:text-white font-mono font-bold text-lg focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition-all uppercase pr-10`}
+              />
+              {trackingNumber.trim() && (
+                <div className="absolute right-3 top-1/2 -translate-y-1/2 text-emerald-500">
+                  <CheckCircle2 className="w-5 h-5" />
+                </div>
+              )}
+            </div>
           </div>
 
           {/* Message Preview */}
