@@ -174,6 +174,9 @@ export const ReturnsView = () => {
       // Release the individual scanned QR product units back into stock
       await DataService.releaseProductsForOrder(ret.order_id, 'In Stock');
 
+      // Update order status to 'Returned' in orders table
+      await DataService.updateOrderStatus(ret.order_id, 'Returned');
+
       // Update return status
       const { error } = await anySupabase
         .from('returns')
@@ -188,10 +191,13 @@ export const ReturnsView = () => {
   };
 
   const handleRejectReturn = async (ret: ReturnItem) => {
-    if (!window.confirm('Reject this return? The item will be written off (not restocked).')) return;
+    if (!window.confirm('Reject this return? The item will be marked as damaged/lost (not restocked).')) return;
     try {
-      // Mark the individual scanned QR product units as written off
-      await DataService.releaseProductsForOrder(ret.order_id, 'Written Off');
+      // Mark the individual scanned QR product units as Damaged (valid DB constraint status)
+      await DataService.releaseProductsForOrder(ret.order_id, 'Damaged');
+
+      // Update order status to 'Returned' in orders table
+      await DataService.updateOrderStatus(ret.order_id, 'Returned');
 
       const { error } = await anySupabase
         .from('returns')

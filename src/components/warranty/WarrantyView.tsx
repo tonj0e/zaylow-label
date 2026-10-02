@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Clock } from 'lucide-react';
+import { Clock, Award, ArrowRight } from 'lucide-react';
 import { DataService } from '../../services/dataService';
 import { QrScanner } from '../../components/QrScanner';
 import type { Order } from '../../types';
@@ -10,7 +10,11 @@ interface WarrantyFormState {
   message: string;
 }
 
-export const WarrantyView = () => {
+interface WarrantyViewProps {
+  onNavigateToWarrantyCard?: (order?: Order) => void;
+}
+
+export const WarrantyView: React.FC<WarrantyViewProps> = ({ onNavigateToWarrantyCard }) => {
   const [query, setQuery] = useState('');
   const [order, setOrder] = useState<Order | null>(null);
   const [formState, setFormState] = useState<WarrantyFormState>({
@@ -47,17 +51,32 @@ export const WarrantyView = () => {
 
   const handleLookup = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!query.trim()) {
+    const raw = query.trim();
+    if (!raw) {
       setFormState({ query, status: 'error', message: 'Please enter an Order/Tracking ID' });
       return;
     }
 
-    setFormState({ query, status: 'loading', message: 'Looking up order...' });
+    setFormState({ query: raw, status: 'loading', message: 'Looking up order...' });
 
     try {
-      // First, find the order by ID or tracking number
+      // Find the order by ID or tracking number (case-insensitive, prefix-tolerant)
       const orders = await DataService.getOrders();
-      const foundOrder = orders.find(o => o.id === query || o.trackingNumber === query);
+      const stripped = raw.replace(/^#/, '').toLowerCase();
+      const withPrefix = stripped.startsWith('zyl-') ? stripped : `zyl-${stripped}`;
+
+      const foundOrder = orders.find(o => {
+        const orderIdLower = (o.id || '').toLowerCase();
+        const trackingLower = (o.trackingNumber || '').toLowerCase();
+        const numericPart = orderIdLower.replace(/^zyl-/, '');
+
+        return (
+          orderIdLower === stripped ||
+          orderIdLower === withPrefix ||
+          numericPart === stripped ||
+          (trackingLower && trackingLower === stripped)
+        );
+      });
 
       if (!foundOrder) {
         setFormState({ query, status: 'error', message: 'Order not found with that ID or tracking number' });
@@ -94,6 +113,35 @@ export const WarrantyView = () => {
 
   return (
     <div className="p-4 sm:p-6 space-y-4 sm:space-y-6 select-none max-w-6xl mx-auto">
+      {/* Top Banner / Navigation to 1-Year Warranty Card Studio */}
+      {onNavigateToWarrantyCard && (
+        <div className="bg-gradient-to-r from-pink-500/10 via-rose-500/10 to-pink-500/5 border border-pink-500/30 rounded-2xl p-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 shadow-xs">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-xl bg-[#E11D48] text-white flex items-center justify-center shrink-0 shadow-md shadow-pink-500/20">
+              <Award className="w-5 h-5" />
+            </div>
+            <div>
+              <h3 className="font-black text-sm text-black dark:text-white flex items-center gap-2">
+                1-Year Customer Warranty Card Studio
+                <span className="text-[9px] font-black px-2 py-0.5 rounded-full bg-pink-500/20 text-[#E11D48] uppercase">
+                  New
+                </span>
+              </h3>
+              <p className="text-xs text-slate-600 dark:text-slate-400">
+                Design, preview, and print official 1-Year Guarantee Cards (A6 / 4×6") to put inside product boxes.
+              </p>
+            </div>
+          </div>
+          <button
+            onClick={() => onNavigateToWarrantyCard()}
+            className="px-4 py-2 rounded-xl bg-[#E11D48] hover:bg-[#BE123C] text-white text-xs font-black transition flex items-center gap-1.5 shrink-0 shadow-md shadow-pink-500/20"
+          >
+            <span>Open Card Studio</span>
+            <ArrowRight className="w-3.5 h-3.5" />
+          </button>
+        </div>
+      )}
+
       <div className="flex items-center gap-3 mb-6 sm:mb-8">
         <div className="w-10 h-10 rounded-xl bg-blue-500/20 flex items-center justify-center text-blue-400 shrink-0">
           <Clock className="w-5 h-5" />
@@ -195,6 +243,19 @@ export const WarrantyView = () => {
                 {getWarrantyStatus(order.warrantyStart, order.warrantyEnd, order.status)}
               </span>
             </div>
+
+            {onNavigateToWarrantyCard && (
+              <div className="pt-3 border-t border-slate-200 dark:border-slate-800">
+                <button
+                  type="button"
+                  onClick={() => onNavigateToWarrantyCard(order)}
+                  className="w-full py-2.5 rounded-xl bg-[#E11D48] hover:bg-[#BE123C] text-white font-black text-xs flex items-center justify-center gap-2 shadow-md shadow-pink-500/20 transition active:scale-98"
+                >
+                  <Award className="w-4 h-4" />
+                  <span>Generate 1-Year Warranty Card for {order.customer.name}</span>
+                </button>
+              </div>
+            )}
           </div>
         </div>
       )}

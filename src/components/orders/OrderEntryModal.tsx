@@ -201,14 +201,19 @@ export const OrderEntryModal: React.FC<OrderEntryModalProps> = ({
           setIsScannerOpen(false);
           setPendingOrder(null);
         })
-        .catch((error) => {
+        .catch(async (error) => {
           setIsSaving(false);
+          // Release reserved products back to available stock if saving failed
+          await DataService.releaseProductsForOrder(orderToSave.id, 'In Stock').catch(() => {});
           alert('Failed to save order: ' + error.message);
         });
     }
   };
 
-  const handleScanCancel = () => {
+  const handleScanCancel = async () => {
+    if (pendingOrder) {
+      await DataService.releaseProductsForOrder(pendingOrder.id, 'In Stock').catch(() => {});
+    }
     setIsScannerOpen(false);
     setPendingOrder(null);
   };

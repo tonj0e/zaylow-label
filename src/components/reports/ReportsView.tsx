@@ -48,8 +48,8 @@ const ReportsView = () => {
       // Filter by date range
       const filteredOrders = allOrders.filter(order => {
         const orderDate = new Date(order.createdAt);
-        const startDate = new Date(dateRange.start);
-        const endDate = new Date(dateRange.end);
+        const startDate = new Date(dateRange.start + 'T00:00:00');
+        const endDate = new Date(dateRange.end + 'T23:59:59.999');
         return orderDate >= startDate && orderDate <= endDate;
       });
       setOrders(filteredOrders);

@@ -10,7 +10,8 @@ import {
   ChevronLeft,
   ChevronRight,
   Plus,
-  Download
+  Download,
+  Award
 } from 'lucide-react';
 import { TrackingModal } from './TrackingModal';
 
@@ -28,6 +29,7 @@ interface OrdersViewProps {
   onDeleteOrder: (id: string) => void;
   onUpdateStatus: (id: string, status: OrderStatus) => void;
   onUpdateTracking: (id: string, trackingNumber: string, shippingLabelUrl: string | null) => void;
+  onNavigateToWarrantyCard?: (order: Order) => void;
 }
 
 export const OrdersView: React.FC<OrdersViewProps> = ({
@@ -43,7 +45,8 @@ export const OrdersView: React.FC<OrdersViewProps> = ({
   onDownloadBulkPDF,
   onDeleteOrder,
   onUpdateStatus,
-  onUpdateTracking
+  onUpdateTracking,
+  onNavigateToWarrantyCard
 }) => {
   const [downloadingId, setDownloadingId] = useState<string | null>(null);
   const [downloadModalOrder, setDownloadModalOrder] = useState<Order | null>(null);
@@ -308,6 +311,7 @@ export const OrdersView: React.FC<OrdersViewProps> = ({
                         : order.status === 'Shipped' ? 'text-blue-500 border-blue-500/30'
                         : order.status === 'Delivered' ? 'text-teal-500 border-teal-500/30'
                         : order.status === 'Cancelled' ? 'text-red-500 border-red-500/30'
+                        : order.status === 'Returned' ? 'text-rose-500 border-rose-500/30'
                         : order.status === 'Claims' ? 'text-purple-500 border-purple-500/30'
                         : order.status === 'Processing' || order.status === 'Label Generated' ? 'text-indigo-500 border-indigo-500/30'
                         : 'text-amber-500 border-amber-500/30'
@@ -321,6 +325,7 @@ export const OrdersView: React.FC<OrdersViewProps> = ({
                       <option value="Delivered">Delivered</option>
                       <option value="Cancelled">Cancelled</option>
                       <option value="Claims">Claims</option>
+                      <option value="Returned">Returned</option>
                     </select>
                   </div>
 
@@ -380,6 +385,15 @@ export const OrdersView: React.FC<OrdersViewProps> = ({
                     >
                       Print Label
                     </button>
+                    {onNavigateToWarrantyCard && (
+                      <button
+                        onClick={() => onNavigateToWarrantyCard(order)}
+                        className="p-2 rounded-xl bg-pink-500/10 text-[#E11D48] dark:text-pink-400 font-bold active:bg-pink-500/20 transition flex items-center justify-center border border-pink-500/20"
+                        title="Print 1-Year Warranty Card"
+                      >
+                        <Award className="w-4 h-4" />
+                      </button>
+                    )}
                     <button
                       onClick={() => setDeleteConfirmId(order.id)}
                       className="p-2 rounded-xl bg-red-50 dark:bg-red-500/10 text-red-600 dark:text-red-400 active:bg-red-100 dark:active:bg-red-500/20 transition flex items-center justify-center"
@@ -509,6 +523,8 @@ export const OrdersView: React.FC<OrdersViewProps> = ({
                                 ? 'text-teal-400 border-teal-500/30'
                                 : order.status === 'Cancelled'
                                 ? 'text-red-400 border-red-500/30'
+                                : order.status === 'Returned'
+                                ? 'text-rose-400 border-rose-500/30'
                                 : order.status === 'Claims'
                                 ? 'text-purple-400 border-purple-500/30'
                                 : order.status === 'Processing' || order.status === 'Label Generated'
@@ -524,6 +540,7 @@ export const OrdersView: React.FC<OrdersViewProps> = ({
                             <option value="Delivered">Delivered</option>
                             <option value="Cancelled">Cancelled</option>
                             <option value="Claims">Claims</option>
+                            <option value="Returned">Returned</option>
                           </select>
                         </td>
 
@@ -546,6 +563,17 @@ export const OrdersView: React.FC<OrdersViewProps> = ({
                           >
                             Print
                           </button>
+
+                          {onNavigateToWarrantyCard && (
+                            <button
+                              onClick={() => onNavigateToWarrantyCard(order)}
+                              className="px-2 py-1 rounded bg-pink-500/15 hover:bg-pink-500/25 text-[#E11D48] dark:text-pink-400 font-bold transition text-xs flex items-center gap-1 border border-pink-500/30"
+                              title="Print 1-Year Warranty Card for this Customer"
+                            >
+                              <Award className="w-3.5 h-3.5" />
+                              <span>Card</span>
+                            </button>
+                          )}
 
                           <button
                             onClick={() => setDeleteConfirmId(order.id)}

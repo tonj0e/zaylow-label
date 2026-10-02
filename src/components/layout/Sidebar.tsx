@@ -16,6 +16,7 @@ import {
   FileBarChart,
   FileText,
   Clock,
+  Award,
   X
 } from 'lucide-react';
 import { ENABLE_MULTI_WAREHOUSE } from '../../constants/featureFlags';
@@ -38,7 +39,8 @@ export type ActiveTab =
   | 'warranty'
   | 'claims'
   | 'cartons'
-  | 'products';
+  | 'products'
+  | 'warranty-cards';
 
 import type { OrderStatus } from '../../types';
 
@@ -213,7 +215,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
               {/* Expandable Status Filters */}
               {isOrdersExpanded && setOrderStatusFilter && (
                 <div className="pl-9 pr-3 py-2 space-y-1 mt-1 border-l-2 border-slate-200 dark:border-slate-800 ml-4">
-                  {['ALL', 'Pending', 'Processing', 'Label Generated', 'Printed', 'Shipped', 'Delivered', 'Cancelled', 'Claims'].map((status) => (
+                  {['ALL', 'Pending', 'Processing', 'Label Generated', 'Printed', 'Shipped', 'Delivered', 'Cancelled', 'Claims', 'Returned'].map((status) => (
                     <button
                       key={status}
                       onClick={() => {
@@ -329,6 +331,19 @@ export const Sidebar: React.FC<SidebarProps> = ({
               }`}
             >
               <Clock className="w-4 h-4" /> <span>Warranty</span>
+            </button>
+            <button
+              onClick={() => handleNav('warranty-cards')}
+              className={`w-full flex items-center justify-between px-3 py-2 rounded-lg text-sm transition-all ${
+                isNavActive('warranty-cards') ? 'bg-slate-100 dark:bg-slate-800 text-pink-500 dark:text-pink-400 font-semibold' : 'text-black dark:text-white hover:text-black dark:text-white hover:bg-slate-100 dark:bg-slate-800/40'
+              }`}
+            >
+              <div className="flex items-center gap-3">
+                <Award className="w-4 h-4 text-[#E11D48]" /> <span>Warranty Cards</span>
+              </div>
+              <span className="px-1.5 py-0.2 rounded text-[9px] font-black bg-pink-500/20 text-[#E11D48] border border-pink-500/30">
+                1 Year
+              </span>
             </button>
             <button
               onClick={() => handleNav('claims')}

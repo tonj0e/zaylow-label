@@ -41,17 +41,32 @@ export const ClaimsView = () => {
 
   const handleLookup = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!query.trim()) {
+    const raw = query.trim();
+    if (!raw) {
       setFormState({ query, status: 'error', message: 'Please enter an Order/Tracking ID' });
       return;
     }
 
-    setFormState({ query, status: 'loading', message: 'Looking up order...' });
+    setFormState({ query: raw, status: 'loading', message: 'Looking up order...' });
 
     try {
-      // First, find the order by ID or tracking number
+      // Find the order by ID or tracking number (case-insensitive, prefix-tolerant)
       const orders = await DataService.getOrders();
-      const foundOrder = orders.find(o => o.id === query || o.trackingNumber === query);
+      const stripped = raw.replace(/^#/, '').toLowerCase();
+      const withPrefix = stripped.startsWith('zyl-') ? stripped : `zyl-${stripped}`;
+
+      const foundOrder = orders.find(o => {
+        const orderIdLower = (o.id || '').toLowerCase();
+        const trackingLower = (o.trackingNumber || '').toLowerCase();
+        const numericPart = orderIdLower.replace(/^zyl-/, '');
+
+        return (
+          orderIdLower === stripped ||
+          orderIdLower === withPrefix ||
+          numericPart === stripped ||
+          (trackingLower && trackingLower === stripped)
+        );
+      });
 
       if (!foundOrder) {
         setFormState({ query, status: 'error', message: 'Order not found with that ID or tracking number' });

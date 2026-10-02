@@ -152,6 +152,31 @@ UDYAM LABEL is a **Label Printing & Order Management System** built with React, 
 
 ## Recent Changes & Decisions
 
+### 2026-10-01
+- **Focus Area**: Comprehensive bug audit & fixes across inventory, database constraints, reports, and search lookups
+- **Resolved Bugs**:
+  1. **Inventory Status Synchronization**: `DataService.updateOrderStatus` now synchronizes `inventory_items` status on `Shipped`, `Delivered`, `Returned`, and safely reverts reserved items back to `'In Stock'` with `order_id: null` on `Cancelled`.
+  2. **Orphan Reservation Prevention**: In `OrderEntryModal.tsx`, if order insertion fails or scanner is cancelled, reserved items are immediately reverted to `'In Stock'`. Cleaned up 10 historical orphaned items and synced 75 past delivered/shipped reserved items.
+  3. **Database Constraint Fix in Returns**: Mapped `'Written Off'` to valid DB constraint status `'Damaged'`, and automatically updated `orders.status` to `'Returned'` upon approving/rejecting returns in `ReturnsView.tsx`.
+  4. **Case-Insensitive Stock Validation**: Fixed case-sensitive stock check in `DataService.addOrder` by switching `.eq('product_name', ...)` to `.ilike('product_name', prodName)`.
+  5. **Carton Deletion Protection**: `DataService.deleteCarton` now inspects carton contents before deleting and prevents deletion if it contains products.
+  6. **Reports Date Range Cutoff**: Fixed `ReportsView.tsx` end date time calculation (`T23:59:59.999`) so orders placed on the end date are included.
+  7. **Normalized Order/Tracking Lookup**: Made `WarrantyView.tsx` and `ClaimsView.tsx` lookups prefix-tolerant (`ZYL-`, `#`) and case-insensitive.
+  8. **Missing Returned Status Option**: Added `Returned` option and badge colors to `OrdersView.tsx` and `Sidebar.tsx`.
+  9. **Stock Summary Normalization**: Grouped stock summary by lowercase trimmed product name to eliminate duplicate fragmented entries.
+- **Files Modified**:
+  - `src/services/dataService.ts`
+  - `src/components/warehouse/ReturnsView.tsx`
+  - `src/components/orders/OrderEntryModal.tsx`
+  - `src/components/orders/OrdersView.tsx`
+  - `src/components/layout/Sidebar.tsx`
+  - `src/components/reports/ReportsView.tsx`
+  - `src/components/warranty/WarrantyView.tsx`
+  - `src/components/claims/ClaimsView.tsx`
+- **Verification**:
+  - `tsc -b` and `oxlint` pass with 0 errors.
+  - Production build succeeded (`npm run build`).
+
 ### 2026-08-07
 - **Focus Area**: Fixed JSX syntax errors and verified frontend functionality
 - **Problem**: User reported persistent error after previous JSX fixes
@@ -172,9 +197,9 @@ UDYAM LABEL is a **Label Printing & Order Management System** built with React, 
 ## Current TODOs & Known Issues
 
 ### Immediate Tasks
-- [ ] Apply database migrations for warehouse functionality
-- [ ] Test carton creation functionality in CartonsView component
-- [ ] Validate carton deletion protection (prevent deletion when products assigned)
+- [x] Validate carton deletion protection (prevent deletion when products assigned)
+- [x] Fix inventory status synchronization on order status updates
+- [x] Fix database constraint violation on return rejection
 - [ ] Test bulk label generation from warehouse module
 - [ ] Verify inventory synchronization when moving products between cartons
 

@@ -14,6 +14,7 @@ import { ReturnsView } from './components/warehouse/ReturnsView';
 import { InventoryOutView } from './components/warehouse/InventoryOutView';
 import { StockSummary } from './components/warehouse/StockSummary';
 import { WarrantyView } from './components/warranty/WarrantyView';
+import { WarrantyCardView } from './components/warranty/WarrantyCardView';
 import { ClaimsView } from './components/claims/ClaimsView';
 import { InventoryAdd } from './components/inventory/InventoryAdd';
 import { InventoryList } from './components/inventory/InventoryList';
@@ -75,6 +76,7 @@ export function App() {
   });
   const [isOrderModalOpen, setIsOrderModalOpen] = useState<boolean>(false);
   const [selectedOrderForLabel, setSelectedOrderForLabel] = useState<Order | null>(null);
+  const [selectedOrderForWarrantyCard, setSelectedOrderForWarrantyCard] = useState<Order | null>(null);
   const [bulkPrintOrders, setBulkPrintOrders] = useState<Order[]>([]);
   const [orderStatusFilter, setOrderStatusFilter] = useState<OrderStatus | 'ALL'>('ALL');
   const [isSidebarOpen, setIsSidebarOpen] = useState<boolean>(false);
@@ -383,6 +385,10 @@ export function App() {
               onDeleteOrder={handleDeleteOrder}
               onUpdateStatus={handleUpdateStatus}
               onUpdateTracking={handleUpdateTracking}
+              onNavigateToWarrantyCard={(order: Order) => {
+                setSelectedOrderForWarrantyCard(order);
+                navigateTo('warranty-cards');
+              }}
             />
           )}
 
@@ -420,7 +426,20 @@ export function App() {
           )}
 
           {/* Warranty Section - Always rendered */}
-          {activeTab === 'warranty' && <WarrantyView />}
+          {activeTab === 'warranty' && (
+            <WarrantyView
+              onNavigateToWarrantyCard={(order) => {
+                setSelectedOrderForWarrantyCard(order || null);
+                navigateTo('warranty-cards');
+              }}
+            />
+          )}
+          {activeTab === 'warranty-cards' && (
+            <WarrantyCardView
+              orders={orders}
+              initialOrder={selectedOrderForWarrantyCard}
+            />
+          )}
           {activeTab === 'claims' && <ClaimsView />}
 
           {activeTab === 'settings' && (

@@ -96,18 +96,19 @@ export class DataService {
 
     // Check if sufficient inventory exists before placing order
     try {
+      const prodName = (order.item.productName || '').trim();
       // Products might already be reserved by the Scanner for this specific order
       const { count: reservedCount } = await anySupabase
         .from('inventory_items')
         .select('*', { count: 'exact', head: true })
         .eq('order_id', order.id)
-        .eq('product_name', order.item.productName)
+        .ilike('product_name', prodName)
         .eq('status', 'Reserved');
 
       const { count: inStockCount, error: countError } = await anySupabase
         .from('inventory_items')
         .select('*', { count: 'exact', head: true })
-        .eq('product_name', order.item.productName)
+        .ilike('product_name', prodName)
         .eq('status', 'In Stock');
 
       if (countError) throw countError;
@@ -160,6 +161,8 @@ export class DataService {
 
     if (error) {
       console.error('Error adding order:', error);
+      // Clean up any reserved items if the order insert failed
+      await this.releaseProductsForOrder(order.id, 'In Stock').catch(() => {});
       return null;
     }
 
@@ -260,6 +263,49 @@ export class DataService {
         console.error('Error updating order status:', error);
         return false;
       }
+
+      // Synchronize corresponding inventory_items status
+      try {
+        if (status === 'Cancelled') {
+          await anySupabase
+            .from('inventory_items')
+            .update({
+              order_id: null,
+              customer_name: null,
+              status: 'In Stock',
+              reserved_at: null,
+              updated_at: new Date().toISOString()
+            })
+            .eq('order_id', id);
+        } else if (status === 'Shipped') {
+          await anySupabase
+            .from('inventory_items')
+            .update({
+              status: 'Shipped',
+              updated_at: new Date().toISOString()
+            })
+            .eq('order_id', id);
+        } else if (status === 'Delivered') {
+          await anySupabase
+            .from('inventory_items')
+            .update({
+              status: 'Delivered',
+              updated_at: new Date().toISOString()
+            })
+            .eq('order_id', id);
+        } else if (status === 'Returned') {
+          await anySupabase
+            .from('inventory_items')
+            .update({
+              status: 'Returned',
+              updated_at: new Date().toISOString()
+            })
+            .eq('order_id', id);
+        }
+      } catch (syncErr) {
+        console.warn('Warning: Order status updated but inventory items sync failed:', syncErr);
+      }
+
       return true;
     } catch (e) {
       console.error('Exception updating order status:', e);
@@ -620,18 +666,23 @@ export class DataService {
   }
 
   static async deleteCarton(id: string): Promise<boolean> {
-    // First delete all products (inventory_items) in this carton
-    const { error: productsError } = await anySupabase
+    // Check if carton contains any products first (protect against silent deletion)
+    const { count, error: countError } = await anySupabase
       .from('inventory_items')
-      .delete()
+      .select('*', { count: 'exact', head: true })
       .eq('carton_id', id);
 
-    if (productsError) {
-      console.error('Error deleting products in carton:', productsError);
+    if (countError) {
+      console.error('Error checking carton contents:', countError);
       return false;
     }
 
-    // Then delete the carton itself
+    if (count && count > 0) {
+      alert(`Cannot delete carton: It currently contains ${count} product(s). Please move or delete the products before deleting this carton.`);
+      return false;
+    }
+
+    // Delete empty carton
     const { error } = await anySupabase
       .from('cartons')
       .delete()
@@ -682,12 +733,15 @@ export class DataService {
     const summaryMap: Record<string, any> = {};
     
     products.forEach((p: any) => {
-      const name = p.product_name;
-      if (!summaryMap[name]) {
-        summaryMap[name] = {
-          id: name,
-          product_name: name,
-          sku: p.sku ? p.sku.replace(/-?\d+$/, '').replace(/-$/, '') : name.substring(0,3).toUpperCase(),
+      const rawName = (p.product_name || '').trim();
+      if (!rawName) return;
+      const lowerKey = rawName.toLowerCase();
+
+      if (!summaryMap[lowerKey]) {
+        summaryMap[lowerKey] = {
+          id: rawName,
+          product_name: rawName,
+          sku: p.sku ? p.sku.replace(/-?\d+$/, '').replace(/-$/, '') : rawName.substring(0,3).toUpperCase(),
           total_in: 0,
           available: 0,
           sold: 0,
@@ -695,20 +749,21 @@ export class DataService {
         };
       }
       
-      summaryMap[name].total_in += 1;
+      summaryMap[lowerKey].total_in += 1;
       
       if (p.status === 'In Stock') {
-        summaryMap[name].available += 1;
+        summaryMap[lowerKey].available += 1;
       } else if (p.status === 'Reserved' || p.status === 'Shipped' || p.status === 'Delivered') {
-        summaryMap[name].sold += 1;
+        summaryMap[lowerKey].sold += 1;
       }
     });
 
     if (!returnsError && returnsData) {
       returnsData.forEach((r: any) => {
-        const name = r.product;
-        if (summaryMap[name]) {
-          summaryMap[name].returns += 1;
+        const rawName = (r.product || '').trim();
+        const lowerKey = rawName.toLowerCase();
+        if (summaryMap[lowerKey]) {
+          summaryMap[lowerKey].returns += 1;
         }
       });
     }
@@ -818,9 +873,12 @@ export class DataService {
     return true;
   }
 
-  static async releaseProductsForOrder(orderId: string, newStatus: 'In Stock' | 'Written Off'): Promise<boolean> {
+  static async releaseProductsForOrder(orderId: string, newStatus: 'In Stock' | 'Damaged' | 'Lost' | 'Written Off'): Promise<boolean> {
+    // Map 'Written Off' to 'Damaged' to satisfy Postgres CHECK constraint (status IN ('In Stock', 'Reserved', 'Packed', 'Shipped', 'Delivered', 'Returned', 'Warranty', 'Damaged', 'Lost'))
+    const validDbStatus = (newStatus === ('Written Off' as any)) ? 'Damaged' : newStatus;
+
     const updateData: any = {
-      status: newStatus,
+      status: validDbStatus,
       updated_at: new Date().toISOString()
     };
 
