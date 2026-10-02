@@ -52,9 +52,8 @@ export function TrackingModal({ isOpen, onClose, order, onSubmit }: TrackingModa
           BarcodeFormat.QR_CODE,
           BarcodeFormat.EAN_13
         ]);
-        hints.set(DecodeHintType.TRY_HARDER, true);
 
-        const reader = new BrowserMultiFormatReader(hints, { delayBetweenScanAttempts: 300 });
+        const reader = new BrowserMultiFormatReader(hints, { delayBetweenScanAttempts: 250 });
         if (!videoRef.current || !isMounted) return;
 
         const ctrl = await reader.decodeFromConstraints(
