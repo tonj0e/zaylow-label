@@ -61,10 +61,10 @@ export const WarrantyCard: React.FC<WarrantyCardProps> = ({
             </svg>
           </div>
           <div>
-            <h1 className="font-black text-[19px] tracking-[4px] uppercase text-black leading-none font-sans">
+            <h1 className="font-black text-[19px] tracking-[3px] uppercase text-black leading-tight font-sans">
               ZAYLOW
             </h1>
-            <p className="text-[7.5px] font-bold tracking-[1.5px] uppercase text-slate-700 leading-none mt-1">
+            <p className="text-[7.5px] font-bold tracking-[1.5px] uppercase text-slate-700 leading-normal mt-0.5">
               Comfort For A Better You
             </p>
           </div>
@@ -89,10 +89,10 @@ export const WarrantyCard: React.FC<WarrantyCardProps> = ({
       <div className="grid grid-cols-12 gap-2 items-center my-0.5">
         {/* Left: 1 YEAR WARRANTY CARD & Product Pill */}
         <div className="col-span-6 flex flex-col justify-center">
-          <h2 className="text-[38px] font-black tracking-tighter text-black leading-none">
+          <h2 className="text-[36px] font-black tracking-normal text-black leading-none">
             1 YEAR
           </h2>
-          <h3 className="text-[13.5px] font-black tracking-wider uppercase text-black leading-tight mt-0.5">
+          <h3 className="text-[13px] font-black tracking-wider uppercase text-black leading-tight mt-1">
             WARRANTY CARD
           </h3>
           <div className="mt-1.5 inline-block">
@@ -126,31 +126,31 @@ export const WarrantyCard: React.FC<WarrantyCardProps> = ({
       <div className="grid grid-cols-4 divide-x divide-slate-300 border-t border-b border-slate-300 py-1.5 my-1 text-center">
         {/* 1. Heat Therapy */}
         <div className="px-1 flex flex-col items-center justify-center">
-          <Flame className="w-4 h-4 text-black mb-0.5" />
-          <p className="font-bold text-[8.5px] text-black leading-tight">Smooth</p>
-          <p className="font-bold text-[8.5px] text-black leading-tight">Heat Therapy</p>
-          <p className="text-[6.5px] text-slate-600 leading-tight mt-0.5 font-medium">3 Heating Modes</p>
+          <Flame className="w-4 h-4 text-black mb-0.5 shrink-0" />
+          <p className="font-bold text-[8.5px] text-black leading-snug whitespace-nowrap">Smooth</p>
+          <p className="font-bold text-[8.5px] text-black leading-snug whitespace-nowrap">Heat Therapy</p>
+          <p className="text-[6.5px] text-slate-600 leading-snug mt-0.5 font-medium whitespace-nowrap">3 Heating Modes</p>
         </div>
 
         {/* 2. Massage Modes */}
         <div className="px-1 flex flex-col items-center justify-center">
-          <BarChart2 className="w-4 h-4 text-black mb-0.5" />
-          <p className="font-bold text-[8.5px] text-black leading-tight">Massage Modes</p>
-          <p className="text-[6.5px] text-slate-600 leading-tight mt-0.5 font-medium">4 Massage Modes</p>
+          <BarChart2 className="w-4 h-4 text-black mb-0.5 shrink-0" />
+          <p className="font-bold text-[8.5px] text-black leading-snug whitespace-nowrap">Massage Modes</p>
+          <p className="text-[6.5px] text-slate-600 leading-snug mt-0.5 font-medium whitespace-nowrap">4 Massage Modes</p>
         </div>
 
         {/* 3. Safe & Reliable */}
         <div className="px-1 flex flex-col items-center justify-center">
-          <ShieldCheck className="w-4 h-4 text-black mb-0.5" />
-          <p className="font-bold text-[8.5px] text-black leading-tight">Safe &</p>
-          <p className="font-bold text-[8.5px] text-black leading-tight">Reliable</p>
+          <ShieldCheck className="w-4 h-4 text-black mb-0.5 shrink-0" />
+          <p className="font-bold text-[8.5px] text-black leading-snug whitespace-nowrap">Safe &amp;</p>
+          <p className="font-bold text-[8.5px] text-black leading-snug whitespace-nowrap">Reliable</p>
         </div>
 
         {/* 4. Lightweight & Portable */}
         <div className="px-1 flex flex-col items-center justify-center">
-          <Feather className="w-4 h-4 text-black mb-0.5" />
-          <p className="font-bold text-[8.5px] text-black leading-tight">Lightweight</p>
-          <p className="font-bold text-[8.5px] text-black leading-tight">& Portable</p>
+          <Feather className="w-4 h-4 text-black mb-0.5 shrink-0" />
+          <p className="font-bold text-[8.5px] text-black leading-snug whitespace-nowrap">Lightweight</p>
+          <p className="font-bold text-[8.5px] text-black leading-snug whitespace-nowrap">&amp; Portable</p>
         </div>
       </div>
 
@@ -165,7 +165,7 @@ export const WarrantyCard: React.FC<WarrantyCardProps> = ({
         {/* Rows with light gray pills */}
         <div className="p-2 space-y-1 bg-white text-[10px]">
           <div className="flex items-center">
-            <span className="font-bold text-black w-28 shrink-0">Customer Name</span>
+            <span className="font-bold text-black w-28 shrink-0 whitespace-nowrap">Customer Name</span>
             <span className="font-bold text-black mr-2">:</span>
             <div className="flex-1 bg-slate-100 rounded px-2.5 py-0.5 font-bold text-black truncate">
               {customerName}
@@ -173,7 +173,7 @@ export const WarrantyCard: React.FC<WarrantyCardProps> = ({
           </div>
 
           <div className="flex items-center">
-            <span className="font-bold text-black w-28 shrink-0">Purchase Date</span>
+            <span className="font-bold text-black w-28 shrink-0 whitespace-nowrap">Purchase Date</span>
             <span className="font-bold text-black mr-2">:</span>
             <div className="flex-1 bg-slate-100 rounded px-2.5 py-0.5 font-bold text-black font-mono truncate">
               {purchaseDate}
@@ -181,7 +181,7 @@ export const WarrantyCard: React.FC<WarrantyCardProps> = ({
           </div>
 
           <div className="flex items-center">
-            <span className="font-bold text-black w-28 shrink-0">Warranty Period</span>
+            <span className="font-bold text-black w-28 shrink-0 whitespace-nowrap">Warranty Period</span>
             <span className="font-bold text-black mr-2">:</span>
             <div className="flex-1 bg-slate-100 rounded px-2.5 py-0.5 font-bold text-black font-mono truncate">
               {displayWarrantyPeriod}

@@ -214,18 +214,59 @@ export const WarrantyCardView: React.FC<WarrantyCardViewProps> = ({
     handleSelectOrder(filteredOrders[nextIdx]);
   };
 
-  // High-Resolution Card Printing: Formatted for 4x6 Thermal Printer (Portrait Single Label)
-  const handlePrintCard = async () => {
-    if (!printContainerRef.current) return;
-    setIsExporting(true);
+  // Capture high-DPI canvas without ANY CSS transform interference or font collapse
+  const captureCardCanvas = async (scale: number = 3): Promise<HTMLCanvasElement | null> => {
+    const el = printContainerRef.current;
+    if (!el) return null;
+
+    // The preview wrapper uses CSS transform: scale(...) to fit the screen.
+    // html2canvas incorrectly calculates font glyph advances when any parent has a CSS transform,
+    // which causes letters and words to collide/overlap.
+    // We temporarily remove the transform during html2canvas capture and immediately restore it.
+    const transformParent = el.parentElement;
+    const prevTransform = transformParent ? transformParent.style.transform : '';
+    const prevOrigin = transformParent ? transformParent.style.transformOrigin : '';
+
+    if (transformParent) {
+      transformParent.style.transform = 'none';
+      transformParent.style.transformOrigin = 'initial';
+    }
+
     try {
-      const dim = CARD_DIMENSIONS[cardSize] || CARD_DIMENSIONS.thermal;
-      const canvas = await html2canvas(printContainerRef.current, {
-        scale: 3, // Ultra-crisp 300 DPI for thermal heads
+      const canvas = await html2canvas(el, {
+        scale: scale,
         useCORS: true,
         backgroundColor: '#ffffff',
-        logging: false
+        logging: false,
+        onclone: (clonedDoc) => {
+          // Double guarantee: ensure cloned element and its parents have zero transforms
+          const clonedCard = clonedDoc.querySelector('.warranty-card-element') as HTMLElement;
+          if (clonedCard) {
+            clonedCard.style.transform = 'none';
+            let curr = clonedCard.parentElement;
+            while (curr && curr !== clonedDoc.body) {
+              curr.style.transform = 'none';
+              curr = curr.parentElement;
+            }
+          }
+        }
       });
+      return canvas;
+    } finally {
+      if (transformParent) {
+        transformParent.style.transform = prevTransform;
+        transformParent.style.transformOrigin = prevOrigin;
+      }
+    }
+  };
+
+  // High-Resolution Card Printing: Formatted for 4x6 Thermal Printer (Portrait Single Label)
+  const handlePrintCard = async () => {
+    setIsExporting(true);
+    try {
+      const canvas = await captureCardCanvas(3);
+      if (!canvas) return;
+      const dim = CARD_DIMENSIONS[cardSize] || CARD_DIMENSIONS.thermal;
       const dataUrl = canvas.toDataURL('image/png');
 
       const printWindow = window.open('', '_blank');
@@ -294,15 +335,10 @@ export const WarrantyCardView: React.FC<WarrantyCardViewProps> = ({
 
   // Download High-DPI PNG
   const handleDownloadPNG = async () => {
-    if (!printContainerRef.current) return;
     setIsExporting(true);
     try {
-      const canvas = await html2canvas(printContainerRef.current, {
-        scale: 3,
-        useCORS: true,
-        backgroundColor: '#ffffff',
-        logging: false
-      });
+      const canvas = await captureCardCanvas(3);
+      if (!canvas) return;
       const link = document.createElement('a');
       link.download = `ZAYLOW-WarrantyCard-${customerName.replace(/\s+/g, '_')}.png`;
       link.href = canvas.toDataURL('image/png');
@@ -317,16 +353,11 @@ export const WarrantyCardView: React.FC<WarrantyCardViewProps> = ({
 
   // Download High-DPI PDF
   const handleDownloadPDF = async () => {
-    if (!printContainerRef.current) return;
     setIsExporting(true);
     try {
       const dim = CARD_DIMENSIONS[cardSize] || CARD_DIMENSIONS.thermal;
-      const canvas = await html2canvas(printContainerRef.current, {
-        scale: 3,
-        useCORS: true,
-        backgroundColor: '#ffffff',
-        logging: false
-      });
+      const canvas = await captureCardCanvas(3);
+      if (!canvas) return;
       const imgData = canvas.toDataURL('image/png');
 
       const pdf = new jsPDF({
