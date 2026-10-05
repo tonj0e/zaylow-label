@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import type { Order, CourierName, PaymentType, CompanySettings } from '../../types';
 import { ThermalLabel } from '../label/ThermalLabel';
-import { Save, RefreshCw, Eye, Download, X } from 'lucide-react';
+import { Save, RefreshCw, Eye, Download, X, AlertCircle } from 'lucide-react';
 import html2canvas from 'html2canvas';
 import { DataService } from '../../services/dataService';
 import { indiaStatesAndDistricts } from '../../constants/indiaStates';
@@ -43,6 +43,8 @@ export const OrderEntryModal: React.FC<OrderEntryModalProps> = ({
   const [warrantyType, setWarrantyType] = useState<string>('0');
   const [customWarrantyDays, setCustomWarrantyDays] = useState<number | ''>('');
 
+  const [productError, setProductError] = useState<string | null>(null);
+
   // Scanner workflow state
   const [isScannerOpen, setIsScannerOpen] = useState(false);
   const [pendingOrder, setPendingOrder] = useState<Order | null>(null);
@@ -73,6 +75,7 @@ export const OrderEntryModal: React.FC<OrderEntryModalProps> = ({
       setCodAmount('');
       setWarrantyType('0');
       setCustomWarrantyDays('');
+      setProductError(null);
       setIsScannerOpen(false);
       setPendingOrder(null);
       DataService.getStockSummary().then(setInventory).catch(console.error);
@@ -95,7 +98,7 @@ export const OrderEntryModal: React.FC<OrderEntryModalProps> = ({
       pinCode: pinCode
     },
     item: {
-      productName: productName || 'Select a product...',
+      productName: productName || '[PRODUCT NAME REQUIRED]',
       sku: sku || '---',
       quantity: quantity || 1,
       weightKg: weightKg || 0.5
@@ -125,6 +128,11 @@ export const OrderEntryModal: React.FC<OrderEntryModalProps> = ({
       return;
     }
 
+    if (!productName || !productName.trim() || productName === 'Select a product...' || productName === '[PRODUCT NAME REQUIRED]') {
+      setProductError('Please select a product name. Product Name is required to save order and generate label.');
+      return;
+    }
+
     // Create draft order for scanning workflow
     const draftOrder: Order = {
       id: orderId || 'ZYL-PREVIEW',
@@ -139,7 +147,7 @@ export const OrderEntryModal: React.FC<OrderEntryModalProps> = ({
         pinCode: pinCode
       },
       item: {
-        productName: productName || 'Select a product...',
+        productName: productName.trim(),
         sku: sku || '---',
         quantity: quantity || 1,
         weightKg: weightKg || 0.5
@@ -168,6 +176,10 @@ export const OrderEntryModal: React.FC<OrderEntryModalProps> = ({
   };
 
   const handleDownload = async () => {
+    if (!productName || !productName.trim() || productName === 'Select a product...' || productName === '[PRODUCT NAME REQUIRED]') {
+      setProductError('Please select a product name before downloading the label.');
+      return;
+    }
     if (!labelRef.current) return;
     try {
       const canvas = await html2canvas(labelRef.current, { scale: 3, useCORS: true });
@@ -415,26 +427,48 @@ export const OrderEntryModal: React.FC<OrderEntryModalProps> = ({
             {/* Product Details */}
             <div className="grid grid-cols-3 gap-3 border-t border-slate-200 dark:border-slate-800 pt-3">
               <div className="col-span-2">
-                <label className="text-[11px] font-bold text-black dark:text-white uppercase tracking-wider block mb-1">
-                  Product Name
-                </label>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="text-[11px] font-bold text-black dark:text-white uppercase tracking-wider block">
+                    Product Name <span className="text-red-500">*</span>
+                  </label>
+                  {productError && (
+                    <span className="text-[10px] text-red-500 font-bold flex items-center gap-1">
+                      <AlertCircle className="w-3 h-3" />
+                      Required
+                    </span>
+                  )}
+                </div>
                 <select
+                  required
                   value={productName}
                   onChange={(e) => {
                     const selectedName = e.target.value;
                     setProductName(selectedName);
+                    if (selectedName.trim()) {
+                      setProductError(null);
+                    }
                     const item = inventory.find(i => i.product_name === selectedName);
                     if (item && item.sku) {
                       setSku(item.sku);
                     }
                   }}
-                  className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-lg text-black dark:text-white text-xs focus:outline-none focus:border-emerald-500"
+                  className={`w-full px-3 py-2 bg-slate-50 dark:bg-slate-950 border ${
+                    productError
+                      ? 'border-red-500 ring-2 ring-red-500/20'
+                      : 'border-slate-200 dark:border-slate-800'
+                  } rounded-lg text-black dark:text-white text-xs focus:outline-none focus:border-emerald-500 transition-colors`}
                 >
-                  <option value="">Select Product</option>
+                  <option value="">Select Product *</option>
                   {inventory.map((item) => (
                     <option key={item.id} value={item.product_name}>{item.product_name}</option>
                   ))}
                 </select>
+                {productError && (
+                  <p className="text-[11px] text-red-500 font-bold mt-1 flex items-center gap-1">
+                    <AlertCircle className="w-3.5 h-3.5 shrink-0" />
+                    <span>{productError}</span>
+                  </p>
+                )}
               </div>
 
               <div>
