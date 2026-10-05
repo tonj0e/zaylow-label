@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { BrowserMultiFormatReader } from '@zxing/browser';
+import type { BrowserMultiFormatReader } from '@zxing/browser';
 
 interface QrScannerProps {
   onScan: (data: string) => void;
@@ -27,25 +27,41 @@ export const QrScanner: React.FC<QrScannerProps> = ({
 
   useEffect(() => {
     if (isScanning && videoRef.current) {
-      const reader = new BrowserMultiFormatReader();
-      readerRef.current = reader;
+      let isMounted = true;
 
-      reader.decodeOnceFromVideoDevice(undefined, videoRef.current)
-        .then(result => {
-          if (result) {
-            onScan(result.getText());
-          }
-          setIsScanning(false);
-        })
-        .catch(err => {
+      import('@zxing/browser').then(({ BrowserMultiFormatReader }) => {
+        if (!isMounted || !videoRef.current) return;
+        const reader = new BrowserMultiFormatReader();
+        readerRef.current = reader;
+
+        reader.decodeOnceFromVideoDevice(undefined, videoRef.current)
+          .then(result => {
+            if (result && isMounted) {
+              onScan(result.getText());
+            }
+            if (isMounted) setIsScanning(false);
+          })
+          .catch(err => {
+            if (!isMounted) return;
+            const errorMsg = err instanceof Error ? err.message : 'Unknown error';
+            console.error('QR scanning error:', errorMsg);
+            onError?.(errorMsg);
+            setIsScanning(false);
+          })
+          .finally(() => {
+            readerRef.current = null;
+          });
+      }).catch(err => {
+        if (isMounted) {
           const errorMsg = err instanceof Error ? err.message : 'Unknown error';
-          console.error('QR scanning error:', errorMsg);
           onError?.(errorMsg);
           setIsScanning(false);
-        })
-        .finally(() => {
-          readerRef.current = null;
-        });
+        }
+      });
+
+      return () => {
+        isMounted = false;
+      };
     }
   }, [isScanning, onScan, onError]);
 
