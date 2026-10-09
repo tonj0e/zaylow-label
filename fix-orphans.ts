@@ -1,11 +1,17 @@
 import { createClient } from '@supabase/supabase-js';
 import dotenv from 'dotenv';
+dotenv.config({ path: '.env.local' });
 dotenv.config();
 
-const supabase = createClient(
-  process.env.VITE_SUPABASE_URL as string,
-  process.env.VITE_SUPABASE_ANON_KEY as string
-);
+const url = process.env.VITE_SUPABASE_URL;
+const key = process.env.VITE_SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_PUBLISHABLE_KEY;
+
+if (!url || !key) {
+  console.error('Missing VITE_SUPABASE_URL or Supabase Key in .env.local / environment.');
+  process.exit(1);
+}
+
+const supabase = createClient(url, key);
 
 async function run() {
   console.log('Fetching reserved items...');
