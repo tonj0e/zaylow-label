@@ -2,19 +2,36 @@ import { serve } from "https://deno.land/std@0.177.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.14.0";
 
 // Define generic tracking status mappings
-const STATUS_MAP = {
+// Only statuses listed here change an order. Anything else (EXCEPTION, unknown
+// states) is acknowledged but ignored, so a courier hiccup can never push an
+// order back to "Pending".
+const STATUS_MAP: Record<string, string> = {
   "DELIVERED": "Delivered",
   "IN_TRANSIT": "Shipped",
   "OUT_FOR_DELIVERY": "Shipped",
-  "EXCEPTION": "Pending", // Usually requires attention
-  // Map other third party states as needed
 };
+
+// Constant-time string compare to avoid leaking the secret via timing.
+function safeEqual(a: string, b: string): boolean {
+  if (a.length !== b.length) return false;
+  let diff = 0;
+  for (let i = 0; i < a.length; i++) diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  return diff === 0;
+}
 
 serve(async (req: Request) => {
   try {
     // 1. Verify Request Method
     if (req.method !== 'POST') {
       return new Response('Method not allowed', { status: 405 });
+    }
+
+    // 1b. Authenticate: caller must send the shared secret (fail closed).
+    //     Set with: supabase secrets set WEBHOOK_SECRET=<long random string>
+    const expected = Deno.env.get('WEBHOOK_SECRET') ?? '';
+    const provided = req.headers.get('x-webhook-secret') ?? '';
+    if (!expected || !safeEqual(provided, expected)) {
+      return new Response('Unauthorized', { status: 401 });
     }
 
     // 2. Parse Payload
@@ -32,7 +49,14 @@ serve(async (req: Request) => {
     }
 
     // 3. Normalize Status
-    const normalizedStatus = STATUS_MAP[rawStatus.toUpperCase()] || "Pending";
+    const normalizedStatus = STATUS_MAP[String(rawStatus).toUpperCase()];
+    if (!normalizedStatus) {
+      console.log(`Ignoring unmapped status "${rawStatus}" for tracking ${trackingNumber}`);
+      return new Response(JSON.stringify({ success: true, ignored: true }), {
+        headers: { 'Content-Type': 'application/json' },
+        status: 200,
+      });
+    }
 
     console.log(`Received update for tracking ${trackingNumber}: ${normalizedStatus}`);
 
@@ -51,6 +75,14 @@ serve(async (req: Request) => {
 
     if (fetchError || !order) {
       return new Response(JSON.stringify({ error: 'Order not found for tracking number' }), { status: 404 });
+    }
+
+    // Never move a finished order backwards (e.g. Delivered -> Shipped).
+    if (['Delivered', 'Returned', 'Cancelled'].includes(order.status) && order.status !== normalizedStatus) {
+      return new Response(JSON.stringify({ success: true, ignored: true, reason: `order already ${order.status}` }), {
+        headers: { 'Content-Type': 'application/json' },
+        status: 200,
+      });
     }
 
     // 6. If Delivered, compute Warranty

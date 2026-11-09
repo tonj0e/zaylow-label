@@ -1,8 +1,17 @@
 import { serve } from "https://deno.land/std@0.177.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.14.0";
 
-serve(async (_req: Request) => {
+serve(async (req: Request) => {
   try {
+    // Authenticate: caller must send the shared secret (fail closed).
+    //   supabase secrets set CRON_SECRET=<long random string>
+    // and have the scheduler send header:  x-cron-secret: <same string>
+    const expected = Deno.env.get('CRON_SECRET') ?? '';
+    const provided = req.headers.get('x-cron-secret') ?? '';
+    if (!expected || provided.length !== expected.length || provided !== expected) {
+      return new Response('Unauthorized', { status: 401 });
+    }
+
     // 1. Initialize Supabase Client
     const supabaseUrl = Deno.env.get('SUPABASE_URL') ?? '';
     const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '';

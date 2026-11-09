@@ -47,6 +47,8 @@ const ReportsView = () => {
       const allOrders = await DataService.getOrders();
       // Filter by date range
       const filteredOrders = allOrders.filter(order => {
+        // Cancelled orders are not sales
+        if (order.status === 'Cancelled') return false;
         const orderDate = new Date(order.createdAt);
         const startDate = new Date(dateRange.start + 'T00:00:00');
         const endDate = new Date(dateRange.end + 'T23:59:59.999');
@@ -218,7 +220,7 @@ const ReportsView = () => {
         <div className="bg-white rounded-xl shadow-md p-6">
           <div className="flex items-center justify-between mb-4">
             <div className="text-slate-600 space-y-1">
-              <p className="text-sm font-medium">Total Sales</p>
+              <p className="text-sm font-medium" title="Prepaid order values are not stored, so only COD amounts are summed">COD Sales</p>
               <p className="text-xs text-slate-400 dark:text-slate-500">Period: {dateRange.start} to {dateRange.end}</p>
             </div>
             <div className="p-3 bg-emerald-50 rounded-full">

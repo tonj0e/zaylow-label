@@ -14,10 +14,12 @@ export interface IntegrationSetting {
   platform: string;
   name: string;
   is_active: boolean;
-  api_key: string | null;
-  api_secret: string | null;
+  // Secrets are write-only from the browser (see migration 20261109000000);
+  // getAll() never returns api_key / api_secret / email.
+  api_key?: string | null;
+  api_secret?: string | null;
   store_url: string | null;
-  email: string | null;
+  email?: string | null;
   last_verified: string | null;
   last_sync: string | null;
 }
@@ -36,7 +38,7 @@ export class IntegrationService {
   static async getAll(): Promise<IntegrationSetting[]> {
     const { data, error } = await anySupabase
       .from('integration_settings')
-      .select('*')
+      .select('id, platform, name, is_active, store_url, last_verified, last_sync')
       .order('id');
 
     if (error) {

@@ -3,15 +3,34 @@ import type { Order, OrderStatus } from '../types';
 
 const anySupabase = supabase as any;
 
+const PAGE_SIZE = 1000; // matches supabase/config.toml max_rows
+
+/**
+ * Fetch every row of a query, paging past the API's max_rows cap.
+ * `build` must return a FRESH query each call (with a stable order) so that
+ * pages don't overlap or skip rows.
+ */
+async function fetchAllRows(build: () => any): Promise<{ data: any[] | null; error: any }> {
+  const all: any[] = [];
+  for (let from = 0; ; from += PAGE_SIZE) {
+    const { data, error } = await build().range(from, from + PAGE_SIZE - 1);
+    if (error) return { data: null, error };
+    all.push(...(data || []));
+    if (!data || data.length < PAGE_SIZE) break;
+  }
+  return { data: all, error: null };
+}
+
 export class DataService {
   
   // --- ORDERS ---
   
   static async getOrders(): Promise<Order[]> {
-    const { data, error } = (await anySupabase
+    const { data, error } = (await fetchAllRows(() => anySupabase
       .from('orders')
       .select('*')
-      .order('created_at', { ascending: false })) as any;
+      .order('created_at', { ascending: false })
+      .order('id', { ascending: false }))) as any;
       
     if (error) {
       console.error('Error fetching orders:', error);
@@ -83,13 +102,23 @@ export class DataService {
     // Guard: prevent duplicate insert for the same inventory_id
     const { data: existing } = await anySupabase
       .from('orders')
-      .select('inventory_id')
+      .select('inventory_id, customer_name, mobile')
       .eq('inventory_id', order.id)
+      .limit(1)
       .maybeSingle();
 
     if (existing) {
+      const sameCustomer =
+        (existing.customer_name || '').trim().toLowerCase() === (order.customer.name || '').trim().toLowerCase() &&
+        (existing.mobile || '').replace(/\D/g, '') === (order.customer.phone || '').replace(/\D/g, '');
+      if (!sameCustomer) {
+        // A different customer already owns this ID: never silently reuse their order.
+        console.error(`Order ID ${order.id} is already used by another customer.`);
+        alert(`Order ID ${order.id} is already used by a different customer. Please generate a new Order ID and try again.`);
+        return null;
+      }
+      // Same customer re-submitting (double click / retry): idempotent, return the existing order.
       console.warn(`Order ${order.id} already exists. Skipping duplicate insert.`);
-      // Return the existing order data
       const allOrders = await this.getOrders();
       return allOrders.find(o => o.id === order.id) || null;
     }
@@ -572,10 +601,11 @@ export class DataService {
 
   // Returns the next sequential number for a given SKU prefix (e.g., "PM" → finds max PM-XXX → returns next number)
   static async getNextSkuNumber(prefix: string): Promise<number> {
-    const { data } = await anySupabase
+    const { data } = await fetchAllRows(() => anySupabase
       .from('inventory_items')
       .select('sku')
-      .ilike('sku', `${prefix}-%`);
+      .ilike('sku', `${prefix}-%`)
+      .order('id'));
 
     if (!data || data.length === 0) return 1;
 
@@ -698,27 +728,28 @@ export class DataService {
   // --- PRODUCTS (INVENTORY_ITEMS) ---
 
   static async getProducts(cartonId: string | null = null): Promise<any[]> {
-    let query = anySupabase.from('inventory_items').select('*');
-
-    if (cartonId !== null) {
-      query = query.eq('carton_id', cartonId);
-    }
-
-    const { data, error } = await query.order('created_at', { ascending: false });
+    const { data, error } = await fetchAllRows(() => {
+      let query = anySupabase.from('inventory_items').select('*');
+      if (cartonId !== null) {
+        query = query.eq('carton_id', cartonId);
+      }
+      return query.order('created_at', { ascending: false }).order('id', { ascending: false });
+    });
 
     if (error) {
       console.error('Error fetching products:', error);
       return [];
     }
-    return data;
+    return data || [];
   }
 
   // --- INVENTORY AGGREGATION ---
   
   static async getAggregatedStock(): Promise<any[]> {
-    const { data: products, error } = await anySupabase
+    const { data: products, error } = await fetchAllRows(() => anySupabase
       .from('inventory_items')
-      .select('*');
+      .select('product_name, sku, status')
+      .order('id'));
 
     if (error || !products) {
       console.error('Error fetching products for aggregation:', error);
@@ -726,9 +757,10 @@ export class DataService {
     }
 
     // Fetch returns to count them
-    const { data: returnsData, error: returnsError } = await anySupabase
+    const { data: returnsData, error: returnsError } = await fetchAllRows(() => anySupabase
       .from('returns')
-      .select('product');
+      .select('product')
+      .order('id'));
 
     const summaryMap: Record<string, any> = {};
     
@@ -772,16 +804,18 @@ export class DataService {
   }
 
   static async getCartonsWithProductCounts(): Promise<any[]> {
-    const { data: cartons, error: cartonsError } = await anySupabase
+    const { data: cartons, error: cartonsError } = await fetchAllRows(() => anySupabase
       .from('cartons')
       .select('*')
-      .order('created_at', { ascending: false });
+      .order('created_at', { ascending: false })
+      .order('id', { ascending: false }));
 
     if (cartonsError || !cartons) return [];
 
-    const { data: products, error: productsError } = await anySupabase
+    const { data: products, error: productsError } = await fetchAllRows(() => anySupabase
       .from('inventory_items')
-      .select('carton_id, product_name, status');
+      .select('carton_id, product_name, status')
+      .order('id'));
 
     if (productsError || !products) return cartons.map((c: any) => ({ ...c, contents: [], totalUnits: 0 }));
 
@@ -855,7 +889,9 @@ export class DataService {
   }
 
   static async reserveProductForOrder(productId: string, orderId: string, customerName: string, reservedAt: string): Promise<boolean> {
-    const { error } = await anySupabase
+    // Conditional update: only succeeds if the unit is still In Stock (or already
+    // reserved for THIS order). Two staff scanning the same unit can't both win.
+    const { data, error } = await anySupabase
       .from("inventory_items")
       .update({
         order_id: orderId,
@@ -864,10 +900,16 @@ export class DataService {
         reserved_at: reservedAt,
         updated_at: new Date().toISOString()
       })
-      .eq("id", productId);
+      .eq("id", productId)
+      .or(`status.eq.In Stock,order_id.eq.${orderId}`)
+      .select("id");
 
     if (error) {
       console.error("Error reserving product for order:", error);
+      return false;
+    }
+    if (!data || data.length === 0) {
+      console.error(`Product ${productId} is no longer available to reserve for order ${orderId}`);
       return false;
     }
     return true;

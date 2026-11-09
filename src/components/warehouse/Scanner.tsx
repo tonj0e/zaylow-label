@@ -134,12 +134,17 @@ export const Scanner: React.FC<ScannerProps> = ({
     try {
       // Reserve all scanned products
       for (const product of scannedProducts) {
-        await DataService.reserveProductForOrder(
+        const ok = await DataService.reserveProductForOrder(
           product.id,
           order.id,
           order.customer.name,
           new Date().toISOString()
         );
+        if (!ok) {
+          // Roll back anything already reserved for this order so stock isn't left stuck.
+          await DataService.releaseProductsForOrder(order.id, 'In Stock').catch(() => {});
+          throw new Error(`${product.sku || product.id} could not be reserved (already taken or network error). Please re-scan.`);
+        }
       }
 
       // Use human-readable names for the label
