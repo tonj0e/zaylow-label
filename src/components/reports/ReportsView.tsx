@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import type { Order } from '../../types';
 import type { Database } from '../../types/supabase';
 import { DataService } from '../../services/dataService';
+import { orderValue } from '../../utils/orderValue';
 import {
   BarChart2,
   DollarSign,
@@ -58,7 +59,7 @@ const ReportsView = () => {
 
       // Calculate stats
       const totalSales = filteredOrders.reduce((sum, order) => {
-        return sum + (order.paymentType === 'COD' ? order.codAmount : 0); // Assuming prepaid amount is not stored? We'll adjust if needed
+        return sum + orderValue(order);
       }, 0);
       const totalOrders = filteredOrders.length;
       const codOrders = filteredOrders.filter(o => o.paymentType === 'COD').length;
@@ -110,7 +111,7 @@ const ReportsView = () => {
           dailyMap[date] = { sales: 0, orders: 0 };
         }
         dailyMap[date].orders += 1;
-        dailyMap[date].sales += order.paymentType === 'COD' ? order.codAmount : 0;
+        dailyMap[date].sales += orderValue(order);
       });
       const dailySalesArray = Object.entries(dailyMap)
         .map(([date, data]) => ({
@@ -220,7 +221,7 @@ const ReportsView = () => {
         <div className="bg-white rounded-xl shadow-md p-6">
           <div className="flex items-center justify-between mb-4">
             <div className="text-slate-600 space-y-1">
-              <p className="text-sm font-medium" title="Prepaid order values are not stored, so only COD amounts are summed">COD Sales</p>
+              <p className="text-sm font-medium" title="COD balance plus advance paid. Older orders without an advance count only their COD amount.">Total Sales</p>
               <p className="text-xs text-slate-400 dark:text-slate-500">Period: {dateRange.start} to {dateRange.end}</p>
             </div>
             <div className="p-3 bg-emerald-50 rounded-full">

@@ -1,0 +1,81 @@
+/* Kawasaki green and black theme, shared by the dashboard, inventory and label pages.
+   Wrap a page root in .kdash. Dark mode follows the app's `.dark` class. */
+.kdash{--bg:#f0f2ee;--card:#ffffff;--card2:#eef1ea;--line:#dfe4da;--ink:#0b0d0a;--muted:#5d695f;--lime:#22c55e;--lime-text:#16a34a;--on-lime:#04210f;--warn:#a86f00;--bad:#c93b28;--tip:#0b0d0a;--tip-ink:#f4f6f2;
+  background:var(--bg);color:var(--ink);font-family:'DM Sans','Inter',system-ui,sans-serif}
+.dark .kdash{--bg:#0b0d0a;--card:#15181a;--card2:#1d2123;--line:#2a2f31;--ink:#f4f6f2;--muted:#8d9690;--lime-text:#4ade80;--warn:#f5a623;--bad:#ff6a55;--tip:#f4f6f2;--tip-ink:#0b0d0a}
+.kdash .k-display{font-family:'DM Sans','Inter',system-ui,sans-serif;font-weight:700;letter-spacing:-.02em}
+.kdash .k-card{background:var(--card);border:1px solid var(--line);border-radius:20px}
+:where(.kdash .k-card){position:relative}
+.kdash .k-card.k-hot::before{content:'';position:absolute;left:20px;right:60%;top:-1px;height:3px;border-radius:0 0 3px 3px;background:var(--lime)}
+.kdash .k-card2{background:var(--card2)}
+.kdash .k-muted{color:var(--muted)}
+/* text and numbers are plain ink (black in light mode, white in dark); green is only for icons, buttons, bars and charts */
+.kdash .k-lime-text{color:var(--ink)}
+.kdash svg.k-lime-text{color:var(--lime-text)}
+.kdash .k-warn{color:var(--warn)} .kdash .k-bad{color:var(--bad)}
+.kdash .k-display.k-warn,.kdash .k-display.k-bad,.kdash .k-display.k-lime-text{color:var(--ink)}
+.kdash .k-btn-lime{background:var(--lime);color:var(--on-lime)}
+.kdash .k-btn-ghost{background:var(--card);border:1px solid var(--line)}
+.kdash .k-input{background:var(--card2);border:1px solid var(--line);color:var(--ink)}
+.kdash .k-tip{background:var(--tip);color:var(--tip-ink)}
+.kdash .k-skel{background:var(--card2)}
+.kdash .k-rule{border-color:var(--line)}
+.kdash .k-stroke-lime{stroke:var(--lime)} .kdash .k-fill-lime{fill:var(--lime)}
+.kdash .k-stroke-line{stroke:var(--line)} .kdash .k-stroke-muted{stroke:var(--muted)}
+.kdash .k-fill-muted{fill:var(--muted)} .kdash .k-fill-card{fill:var(--card)}
+.kdash .k-track{background:var(--card2)} .kdash .k-bar{background:var(--lime)}
+.kdash :focus-visible{outline:2px solid var(--lime);outline-offset:2px}
+
+/* forms */
+.kdash .k-label{display:block;font-size:.75rem;font-weight:600;color:var(--muted);margin-bottom:.375rem}
+.kdash .k-field{width:100%;background:var(--card2);border:1px solid var(--line);color:var(--ink);border-radius:14px;padding:.7rem 1rem;font-size:.875rem;transition:border-color .15s,box-shadow .15s}
+.kdash .k-field::placeholder{color:var(--muted);opacity:.65}
+.kdash .k-field:focus{outline:none;border-color:var(--lime);box-shadow:0 0 0 3px color-mix(in srgb,var(--lime) 28%,transparent)}
+.kdash select.k-field{cursor:pointer}
+
+/* controls */
+:where(.kdash .k-btn){display:inline-flex}
+.kdash .k-btn{align-items:center;justify-content:center;gap:.5rem;font-weight:700;border-radius:999px;transition:transform .15s,opacity .15s,box-shadow .15s}
+.kdash .k-btn:active{transform:scale(.97)}
+.kdash .k-btn:disabled{opacity:.5;cursor:not-allowed}
+.kdash .k-chip{padding:.4rem .9rem;border-radius:999px;font-size:.8rem;font-weight:600;border:1px solid var(--line);background:var(--card);color:var(--muted);transition:background .15s,color .15s,border-color .15s}
+.kdash .k-chip[aria-pressed="true"]{background:var(--ink);color:var(--bg);border-color:var(--ink)}
+
+/* motion: transform and opacity only, so nothing triggers layout */
+@keyframes kRise{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}
+@keyframes dashDraw{from{stroke-dashoffset:1}to{stroke-dashoffset:0}}
+@keyframes dashFade{from{opacity:0}to{opacity:1}}
+@keyframes dashBar{from{transform:scaleX(0)}to{transform:scaleX(1)}}
+.kdash .k-rise{animation:kRise .5s cubic-bezier(.22,1,.36,1) both;animation-delay:calc(var(--i,0) * 55ms)}
+.kdash .dash-draw{stroke-dasharray:1;stroke-dashoffset:0;animation:dashDraw 1.1s cubic-bezier(.65,0,.35,1) both}
+.kdash .fade-in{animation:dashFade .9s .4s both}
+.kdash .bar-grow{transform-origin:left;animation:dashBar .8s cubic-bezier(.65,0,.35,1) both}
+.kdash .tab-panel{animation:dashFade .25s both}
+@media (prefers-reduced-motion:reduce){.kdash .k-rise,.kdash .dash-draw,.kdash .fade-in,.kdash .bar-grow,.kdash .tab-panel{animation:none}}
+
+/* floating nav rail: expands with CSS only, so hovering never re-renders React */
+.kdash .rail{width:64px;transition:width .2s cubic-bezier(.22,1,.36,1);will-change:width}
+.kdash .rail:not(.rail-closed):hover,.kdash .rail:not(.rail-closed):has(:focus-visible){width:244px}
+.kdash .rail .rail-fade{opacity:0;transition:opacity .15s}
+.kdash .rail:not(.rail-closed):hover .rail-fade,.kdash .rail:not(.rail-closed):has(:focus-visible) .rail-fade,.kdash .rail.rail-open .rail-fade{opacity:1}
+.kdash .rail .rail-count,.kdash .rail .rail-sub{display:none}
+.kdash .rail:not(.rail-closed):hover .rail-count,.kdash .rail:not(.rail-closed):has(:focus-visible) .rail-count,.kdash .rail.rail-open .rail-count{display:inline-block}
+.kdash .rail:not(.rail-closed):hover .rail-sub,.kdash .rail:not(.rail-closed):has(:focus-visible) .rail-sub,.kdash .rail.rail-open .rail-sub{display:block}
+.kdash .rail:not(.rail-closed):hover .rail-dot,.kdash .rail:not(.rail-closed):has(:focus-visible) .rail-dot,.kdash .rail.rail-open .rail-dot,
+.kdash .rail:not(.rail-closed):hover .rail-tick,.kdash .rail:not(.rail-closed):has(:focus-visible) .rail-tick,.kdash .rail.rail-open .rail-tick{display:none}
+.kdash .rail.rail-open{width:260px}
+@media (prefers-reduced-motion:reduce){.kdash .rail,.kdash .rail .rail-fade{transition:none}}
+
+/* calmer controls: ink for selection, soft grey for row actions, green kept for the one main action */
+.kdash .k-btn-ink{background:var(--ink);color:var(--bg)}
+.kdash .k-btn-soft{background:var(--card2);color:var(--ink);transition:background .15s,color .15s,transform .15s}
+.kdash .k-btn-soft:hover{background:var(--ink);color:var(--bg)}
+.kdash .k-row{transition:background .15s}
+.kdash .k-row:hover{background:color-mix(in srgb,var(--card2) 70%,transparent)}
+
+.kdash .k-btn-soft.k-btn-print:hover{background:var(--lime);color:var(--on-lime)}
+
+/* green-outline action: quiet until hovered, then filled */
+.kdash .k-btn-outline-green{background:transparent;color:var(--lime-text);border:1px solid color-mix(in srgb,var(--lime) 55%,transparent);transition:background .15s,color .15s,border-color .15s}
+.kdash .k-btn-outline-green:hover{background:var(--lime);color:var(--on-lime);border-color:var(--lime)}
+.kdash .k-row:hover{box-shadow:inset 2px 0 0 var(--lime)}

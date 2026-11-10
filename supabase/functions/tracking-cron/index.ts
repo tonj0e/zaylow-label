@@ -66,7 +66,7 @@ serve(async (req: Request) => {
           const currentStatus = statusMatch[1];
           console.log(`Current status for ${order.tracking_id}: ${currentStatus}`);
           
-          const isDelivered = currentStatus.toLowerCase().includes('delivered') || currentStatus.toLowerCase().includes('delivery confirmed');
+          const isDelivered = (currentStatus.toLowerCase().includes('delivered') && !/delivered\s*\(\s*sender/i.test(currentStatus)) || currentStatus.toLowerCase().includes('delivery confirmed');
           
           // Use current date for delivery date since we just polled it
           const deliveredDate = new Date().toISOString(); 

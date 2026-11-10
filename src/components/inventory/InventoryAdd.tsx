@@ -1,221 +1,306 @@
-import React, { useState } from 'react';
-import { PackagePlus, Save, DollarSign, Calculator, ChevronRight } from 'lucide-react';
+import React, { useEffect, useRef, useState } from 'react';
+import { PackagePlus, Check, ArrowRight, ArrowLeft, AlertTriangle, CheckCircle2, Loader2, Box } from 'lucide-react';
 import { DataService } from '../../services/dataService';
+import { invalidate } from '../../services/swrCache';
+
+const EMPTY = {
+  productName: '', sku: '', totalCartons: '', piecesPerCarton: '',
+  pricePerPiece: '', freightCost: '', otherCharges: '',
+  supplierName: '', supplierPhone: '', supplierGst: '', supplierAddress: '', invoiceNo: '', poNo: '',
+};
+type Form = typeof EMPTY;
+type Notice = { kind: 'ok' | 'warn' | 'error'; text: string } | null;
+
+const STEPS = ['Product', 'Quantity', 'Cost', 'Supplier'] as const;
+const MAX_BOXES = 48;
+
+const money = (n: number, d = 2) => `₹${n.toLocaleString('en-IN', { minimumFractionDigits: d, maximumFractionDigits: d })}`;
+
+/* eases a number toward its target; instant when motion is reduced */
+const useEased = (target: number, ms = 450) => {
+  const [v, setV] = useState(target);
+  const from = useRef(target);
+  useEffect(() => {
+    if (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) { setV(target); from.current = target; return; }
+    const start = from.current;
+    const t0 = performance.now();
+    let raf = 0;
+    const tick = (t: number) => {
+      const p = Math.min(1, (t - t0) / ms);
+      const val = start + (target - start) * (1 - Math.pow(1 - p, 3));
+      setV(val); from.current = val;
+      if (p < 1) raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [target, ms]);
+  return v;
+};
+
+const Field: React.FC<{ label: string; hint?: string; children: React.ReactNode }> = ({ label, hint, children }) => (
+  <label className="block">
+    <span className="k-label">{label}</span>
+    {children}
+    {hint && <span className="block text-xs k-muted mt-1.5">{hint}</span>}
+  </label>
+);
 
 export const InventoryAdd = () => {
-  const [formData, setFormData] = useState({
-    productName: '',
-    sku: '',
-    totalCartons: '',
-    piecesPerCarton: '',
-    freightCost: '',
-    otherCharges: '',
-    pricePerPiece: '',
-    supplierName: '',
-    supplierPhone: '',
-    supplierGst: '',
-    supplierAddress: '',
-    invoiceNo: '',
-    poNo: ''
-  });
+  const [f, setF] = useState<Form>(EMPTY);
+  const [step, setStep] = useState(0);
+  const [saving, setSaving] = useState(false);
+  const [notice, setNotice] = useState<Notice>(null);
+  const timer = useRef<number | undefined>(undefined);
+  useEffect(() => () => window.clearTimeout(timer.current), []);
 
-  const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    setFormData({ ...formData, [e.target.name]: e.target.value });
+  const set = (e: React.ChangeEvent<HTMLInputElement>) => setF((p) => ({ ...p, [e.target.name]: e.target.value }));
+
+  const cartons = parseInt(f.totalCartons) || 0;
+  const perCarton = parseInt(f.piecesPerCarton) || 0;
+  const pieces = cartons * perCarton;
+  const price = parseFloat(f.pricePerPiece) || 0;
+  const freight = parseFloat(f.freightCost) || 0;
+  const other = parseFloat(f.otherCharges) || 0;
+  const productCost = pieces * price;
+  const total = productCost + freight + other;
+  const perPiece = pieces > 0 ? total / pieces : 0;
+
+  const ePer = useEased(perPiece);
+  const eTotal = useEased(total);
+
+  const valid = [
+    f.productName.trim().length > 0,
+    cartons >= 1 && perCarton >= 1,
+    f.pricePerPiece !== '' && price >= 0,
+    true,
+  ];
+  const canReach = (i: number) => valid.slice(0, i).every(Boolean);
+
+  const show = (n: Notice) => {
+    setNotice(n);
+    window.clearTimeout(timer.current);
+    timer.current = window.setTimeout(() => setNotice(null), 8000);
   };
 
-  const totalPieces = (parseInt(formData.totalCartons) || 0) * (parseInt(formData.piecesPerCarton) || 0);
-  const totalOrderValue = totalPieces * (parseFloat(formData.pricePerPiece) || 0);
-  const totalLandedCost = totalOrderValue + (parseFloat(formData.freightCost) || 0) + (parseFloat(formData.otherCharges) || 0);
-  const landedCostPerPiece = totalPieces > 0 ? (totalLandedCost / totalPieces).toFixed(2) : '0.00';
-
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const submit = async () => {
+    if (saving || !valid.every(Boolean)) return;
+    setSaving(true);
     try {
       const result = await DataService.addInventoryBatch({
         arrival_date: new Date().toISOString(),
-        product_name: formData.productName,
-        total_pieces: totalPieces,
-        landed_cost_per_piece: parseFloat(landedCostPerPiece),
-        pieces_per_carton: parseInt(formData.piecesPerCarton),
-        price_per_piece: parseFloat(formData.pricePerPiece),
-        freight_cost: parseFloat(formData.freightCost || '0'),
-        other_charges: parseFloat(formData.otherCharges || '0'),
-        supplier_name: formData.supplierName || null,
-        supplier_phone: formData.supplierPhone || null,
-        supplier_gst: formData.supplierGst || null,
-        supplier_address: formData.supplierAddress || null,
-        invoice_no: formData.invoiceNo || null,
-        po_no: formData.poNo || null,
-        sku: formData.sku || undefined,
-        total_cartons: parseInt(formData.totalCartons) || undefined
+        product_name: f.productName,
+        total_pieces: pieces,
+        landed_cost_per_piece: parseFloat(perPiece.toFixed(2)),
+        pieces_per_carton: perCarton,
+        price_per_piece: price,
+        freight_cost: freight,
+        other_charges: other,
+        supplier_name: f.supplierName || null,
+        supplier_phone: f.supplierPhone || null,
+        supplier_gst: f.supplierGst || null,
+        supplier_address: f.supplierAddress || null,
+        invoice_no: f.invoiceNo || null,
+        po_no: f.poNo || null,
+        sku: f.sku || undefined,
+        total_cartons: cartons || undefined,
       });
       if (result) {
         try {
-          await DataService.createInventoryCartons(result.id, parseInt(formData.totalCartons) || 0, formData.sku || null);
-          alert('Inventory Successfully Received in Supabase! Cartons created for tracking.');
+          await DataService.createInventoryCartons(result.id, cartons, f.sku || null);
+          show({ kind: 'ok', text: `Received ${pieces.toLocaleString('en-IN')} units of ${f.productName}. The cartons are ready for tracking.` });
         } catch (err) {
           console.error(err);
-          alert('Inventory received but failed to create carton tracking records.');
+          show({ kind: 'warn', text: 'The batch was saved, but its carton records could not be created. Add the cartons from the Cartons page.' });
         }
-        // Reset form
-        setFormData({
-          productName: '', sku: '', totalCartons: '', piecesPerCarton: '',
-          freightCost: '', otherCharges: '', pricePerPiece: '',
-          supplierName: '', supplierPhone: '', supplierGst: '', supplierAddress: '',
-          invoiceNo: '', poNo: ''
-        });
+        invalidate('inventory-overview');
+        setF(EMPTY);
+        setStep(0);
       } else {
-        alert('Failed to save to Supabase. Check console.');
+        show({ kind: 'error', text: 'Nothing was saved. Check your connection and try again.' });
       }
     } catch (err) {
       console.error(err);
-      alert('Error saving inventory.');
+      show({ kind: 'error', text: 'Nothing was saved. Check your connection and try again.' });
+    } finally {
+      setSaving(false);
     }
   };
 
+  const next = () => {
+    if (!valid[step]) return;
+    if (step < STEPS.length - 1) setStep(step + 1);
+    else submit();
+  };
+
+  const boxes = Math.min(cartons, MAX_BOXES);
+  const last = step === STEPS.length - 1;
+
   return (
-    <div className="p-4 sm:p-6 md:p-8 max-w-5xl mx-auto select-none pb-24 sm:pb-8">
-      {/* ── HEADER ── */}
-      <div className="flex items-center gap-3 mb-6 sm:mb-8">
-        <div className="w-10 h-10 sm:w-12 sm:h-12 rounded-xl bg-emerald-500/10 flex items-center justify-center text-emerald-500 dark:text-emerald-400 ring-1 ring-inset ring-emerald-500/20 shadow-sm">
-          <PackagePlus className="w-5 h-5 sm:w-6 sm:h-6" />
-        </div>
-        <div>
-          <h2 className="text-xl sm:text-2xl md:text-3xl font-black text-black dark:text-white tracking-tight">Receive Inventory</h2>
-          <p className="text-[11px] sm:text-xs md:text-sm text-slate-500 dark:text-slate-400 font-medium mt-0.5">Log new stock arrivals and calculate landed costs.</p>
+    <div className="kdash min-h-full p-3 sm:p-5 md:p-7 select-none pb-24 md:pb-10">
+      <div className="max-w-6xl mx-auto space-y-5">
+        <header className="k-rise flex items-center gap-4" style={{ ['--i' as string]: 0 }}>
+          <span className="w-12 h-12 rounded-2xl k-btn-lime flex items-center justify-center shrink-0"><PackagePlus className="w-6 h-6" /></span>
+          <div>
+            <h2 className="text-3xl sm:text-4xl font-bold leading-none k-display">Receive inventory</h2>
+            <p className="text-sm k-muted mt-1.5">Four short steps. The delivery note on the right fills in as you go.</p>
+          </div>
+        </header>
+
+        {notice && (
+          <div role="status" className="k-card px-4 py-3 flex items-start gap-3 text-sm font-medium">
+            {notice.kind === 'ok' ? <CheckCircle2 className="w-5 h-5 shrink-0 k-lime-text" /> : <AlertTriangle className={`w-5 h-5 shrink-0 ${notice.kind === 'warn' ? 'k-warn' : 'k-bad'}`} />}
+            <span>{notice.text}</span>
+          </div>
+        )}
+
+        {/* step track */}
+        <ol className="k-rise flex items-center gap-2 overflow-x-auto" style={{ ['--i' as string]: 1 }} aria-label="Steps">
+          {STEPS.map((name, i) => {
+            const done = i < step && valid[i];
+            const on = i === step;
+            return (
+              <li key={name} className="flex items-center gap-2 shrink-0">
+                <button
+                  type="button"
+                  disabled={!canReach(i)}
+                  onClick={() => setStep(i)}
+                  aria-current={on ? 'step' : undefined}
+                  className="flex items-center gap-2 rounded-full pl-1.5 pr-4 py-1.5 text-sm font-semibold transition-colors disabled:opacity-40"
+                  style={{ background: on ? 'var(--ink)' : 'var(--card)', color: on ? 'var(--bg)' : 'var(--ink)', border: '1px solid var(--line)' }}
+                >
+                  <span className="w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold" style={{ background: done ? 'var(--lime)' : on ? 'var(--bg)' : 'var(--card2)', color: done ? 'var(--on-lime)' : on ? 'var(--ink)' : 'var(--muted)' }}>
+                    {done ? <Check className="w-4 h-4" /> : i + 1}
+                  </span>
+                  {name}{i === 3 && <span className="font-normal opacity-60"> (optional)</span>}
+                </button>
+                {i < STEPS.length - 1 && <span className="w-6 h-px k-rule border-t" aria-hidden />}
+              </li>
+            );
+          })}
+        </ol>
+
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 md:gap-5 items-start">
+          {/* stage */}
+          <form
+            className="lg:col-span-7 k-card p-5 md:p-7 k-rise"
+            style={{ ['--i' as string]: 2 }}
+            onSubmit={(e) => { e.preventDefault(); next(); }}
+          >
+            <div key={step} className="tab-panel space-y-5 min-h-[260px]">
+              {step === 0 && (
+                <>
+                  <h3 className="text-2xl font-bold k-display">What did you receive?</h3>
+                  <Field label="Product name">
+                    <input className="k-field text-lg" style={{ padding: '1rem 1.1rem', fontSize: '1.1rem' }} name="productName" value={f.productName} onChange={set} autoFocus placeholder="e.g. Period massager premium" />
+                  </Field>
+                  <Field label="SKU or model number" hint="Used to number each unit. You can leave it blank.">
+                    <input className="k-field" name="sku" value={f.sku} onChange={set} placeholder="e.g. PM-PRM" />
+                  </Field>
+                </>
+              )}
+              {step === 1 && (
+                <>
+                  <h3 className="text-2xl font-bold k-display">How many came in?</h3>
+                  <div className="grid grid-cols-2 gap-4">
+                    <Field label="Cartons">
+                      <input className="k-field" style={{ padding: '1rem 1.1rem', fontSize: '1.5rem', fontWeight: 700 }} type="number" min="1" name="totalCartons" value={f.totalCartons} onChange={set} autoFocus placeholder="0" />
+                    </Field>
+                    <Field label="Pieces in each carton">
+                      <input className="k-field" style={{ padding: '1rem 1.1rem', fontSize: '1.5rem', fontWeight: 700 }} type="number" min="1" name="piecesPerCarton" value={f.piecesPerCarton} onChange={set} placeholder="0" />
+                    </Field>
+                  </div>
+                  <p className="text-sm k-muted">{pieces > 0 ? `${cartons} × ${perCarton} = ${pieces.toLocaleString('en-IN')} units` : 'The carton boxes below fill in as you type.'}</p>
+                </>
+              )}
+              {step === 2 && (
+                <>
+                  <h3 className="text-2xl font-bold k-display">What did it cost?</h3>
+                  <Field label="Price per piece (₹)">
+                    <input className="k-field" style={{ padding: '1rem 1.1rem', fontSize: '1.5rem', fontWeight: 700 }} type="number" step="0.01" min="0" name="pricePerPiece" value={f.pricePerPiece} onChange={set} autoFocus placeholder="0.00" />
+                  </Field>
+                  <div className="grid grid-cols-2 gap-4">
+                    <Field label="Freight (₹)"><input className="k-field" type="number" step="0.01" min="0" name="freightCost" value={f.freightCost} onChange={set} placeholder="0.00" /></Field>
+                    <Field label="Other charges (₹)"><input className="k-field" type="number" step="0.01" min="0" name="otherCharges" value={f.otherCharges} onChange={set} placeholder="0.00" /></Field>
+                  </div>
+                </>
+              )}
+              {step === 3 && (
+                <>
+                  <h3 className="text-2xl font-bold k-display">Who sent it?</h3>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div className="sm:col-span-2"><Field label="Supplier name"><input className="k-field" name="supplierName" value={f.supplierName} onChange={set} autoFocus /></Field></div>
+                    <Field label="Phone"><input className="k-field" name="supplierPhone" value={f.supplierPhone} onChange={set} placeholder="+91" /></Field>
+                    <Field label="GSTIN"><input className="k-field" name="supplierGst" value={f.supplierGst} onChange={set} /></Field>
+                    <div className="sm:col-span-2"><Field label="Address"><input className="k-field" name="supplierAddress" value={f.supplierAddress} onChange={set} /></Field></div>
+                    <Field label="Invoice number"><input className="k-field" name="invoiceNo" value={f.invoiceNo} onChange={set} /></Field>
+                    <Field label="PO number"><input className="k-field" name="poNo" value={f.poNo} onChange={set} /></Field>
+                  </div>
+                </>
+              )}
+            </div>
+
+            {/* carton boxes */}
+            <div className="mt-6 pt-5 border-t k-rule">
+              <p className="text-sm font-semibold mb-3 flex items-center gap-2"><Box className="w-4 h-4 k-lime-text" /> {cartons > 0 ? `${cartons} carton${cartons === 1 ? '' : 's'}` : 'No cartons yet'}</p>
+              {cartons > 0 ? (
+                <ul className="grid gap-2" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(54px, 1fr))' }} aria-hidden>
+                  {Array.from({ length: boxes }).map((_, i) => (
+                    <li
+                      key={i}
+                      className="h-12 rounded-xl flex items-center justify-center text-xs font-bold"
+                      style={{ background: 'color-mix(in srgb, var(--lime) 18%, var(--card2))', border: '1px solid color-mix(in srgb, var(--lime) 40%, var(--line))', animation: `kRise .35s cubic-bezier(.22,1,.36,1) both`, animationDelay: `${Math.min(i, 18) * 18}ms` }}
+                    >
+                      {perCarton > 0 ? `×${perCarton}` : ''}
+                    </li>
+                  ))}
+                  {cartons > MAX_BOXES && <li className="h-12 rounded-xl flex items-center justify-center text-xs font-semibold k-muted">+{cartons - MAX_BOXES}</li>}
+                </ul>
+              ) : (
+                <p className="text-sm k-muted">Set the number of cartons in step 2 and they appear here.</p>
+              )}
+            </div>
+
+            <div className="mt-6 flex items-center justify-between gap-3">
+              <button type="button" onClick={() => setStep(Math.max(0, step - 1))} disabled={step === 0} className="k-btn k-btn-ghost px-5 py-3 text-sm"><ArrowLeft className="w-4 h-4" /> Back</button>
+              <button type="submit" disabled={!valid[step] || saving} className="k-btn k-btn-lime px-7 py-3 text-sm" style={{ boxShadow: '0 10px 28px -10px var(--lime)' }}>
+                {saving ? <><Loader2 className="w-4 h-4 animate-spin" /> Saving…</> : last ? <>Receive {pieces > 0 ? pieces.toLocaleString('en-IN') : ''} units <Check className="w-4 h-4" /></> : <>Continue <ArrowRight className="w-4 h-4" /></>}
+              </button>
+            </div>
+          </form>
+
+          {/* delivery note */}
+          <aside className="lg:col-span-5 lg:sticky lg:top-24 k-rise" style={{ ['--i' as string]: 3 }} aria-live="polite">
+            <div className="k-card overflow-hidden">
+              <div className="px-6 pt-6 pb-5">
+                <p className="text-sm k-muted">Delivery note</p>
+                <p className="text-xl font-bold mt-1 truncate">{f.productName.trim() || 'New delivery'}</p>
+                {f.sku && <p className="font-mono text-xs k-muted mt-0.5">{f.sku}</p>}
+              </div>
+              <div className="border-t border-dashed k-rule mx-6" />
+              <dl className="px-6 py-4 text-sm space-y-2.5">
+                <div className="flex justify-between"><dt className="k-muted">Cartons × pieces</dt><dd className="font-semibold">{cartons || 0} × {perCarton || 0}</dd></div>
+                <div className="flex justify-between"><dt className="k-muted">Total units</dt><dd className="font-semibold">{pieces.toLocaleString('en-IN')}</dd></div>
+                <div className="flex justify-between"><dt className="k-muted">Price per piece</dt><dd className="font-semibold">{money(price)}</dd></div>
+                <div className="flex justify-between"><dt className="k-muted">Product cost</dt><dd className="font-semibold">{money(productCost)}</dd></div>
+                <div className="flex justify-between"><dt className="k-muted">Freight</dt><dd className="font-semibold">{money(freight)}</dd></div>
+                <div className="flex justify-between"><dt className="k-muted">Other charges</dt><dd className="font-semibold">{money(other)}</dd></div>
+              </dl>
+              <div className="border-t border-dashed k-rule mx-6" />
+              <div className="px-6 py-5 flex items-end justify-between gap-4">
+                <div>
+                  <p className="text-sm k-muted">Total landed cost</p>
+                  <p className="text-2xl font-bold k-display mt-0.5">{money(eTotal)}</p>
+                </div>
+                <div className="text-right">
+                  <p className="text-sm k-muted">Per piece</p>
+                  <p className="text-4xl font-bold k-display mt-0.5">{money(ePer)}</p>
+                </div>
+              </div>
+              <div className="h-1.5 k-bar" style={{ opacity: pieces > 0 ? 1 : 0.25, transition: 'opacity .3s' }} />
+            </div>
+          </aside>
         </div>
       </div>
-
-      <form onSubmit={handleSubmit} className="bg-white dark:bg-slate-900 border border-slate-200/70 dark:border-slate-800/70 rounded-2xl p-4 sm:p-6 shadow-sm space-y-8">
-        
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-8 md:gap-10 lg:gap-12">
-          {/* ── LEFT COLUMN (Product & Costing) ── */}
-          <div className="space-y-8">
-            
-            {/* Product Info Section */}
-            <div className="space-y-4 sm:space-y-5">
-              <h3 className="text-[11px] sm:text-xs font-black text-emerald-600 dark:text-emerald-400 uppercase tracking-widest border-b border-slate-200 dark:border-slate-800 pb-2">Product Info</h3>
-
-              <div>
-                <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1.5">Product Name</label>
-                <input type="text" name="productName" value={formData.productName} onChange={handleChange} required className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl px-4 py-3 text-sm text-black dark:text-white focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 transition-all shadow-sm" placeholder="e.g. Premium Copper Bottle" />
-              </div>
-
-              <div>
-                <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1.5">SKU / Model Number</label>
-                <input type="text" name="sku" value={formData.sku} onChange={handleChange} className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl px-4 py-3 text-sm text-black dark:text-white focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 transition-all shadow-sm" placeholder="e.g. BOT-COP-100" />
-              </div>
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1.5">Total Cartons</label>
-                  <input type="number" name="totalCartons" value={formData.totalCartons} onChange={handleChange} required min="1" className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl px-4 py-3 text-sm text-black dark:text-white focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 transition-all shadow-sm" placeholder="0" />
-                </div>
-                <div>
-                  <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1.5">Pieces per Carton</label>
-                  <input type="number" name="piecesPerCarton" value={formData.piecesPerCarton} onChange={handleChange} required min="1" className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl px-4 py-3 text-sm text-black dark:text-white focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 transition-all shadow-sm" placeholder="0" />
-                </div>
-              </div>
-            </div>
-
-            {/* Costing Section */}
-            <div className="space-y-4 sm:space-y-5">
-              <h3 className="text-[11px] sm:text-xs font-black text-emerald-600 dark:text-emerald-400 uppercase tracking-widest border-b border-slate-200 dark:border-slate-800 pb-2 flex items-center gap-2">
-                <Calculator className="w-3.5 h-3.5" />
-                Costing Calculation
-              </h3>
-
-              <div>
-                <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1.5">Base Price Per Piece (₹)</label>
-                <div className="relative shadow-sm">
-                  <DollarSign className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-emerald-500" />
-                  <input type="number" name="pricePerPiece" value={formData.pricePerPiece} onChange={handleChange} required step="0.01" min="0" className="w-full bg-slate-50 dark:bg-slate-950 border border-emerald-500/20 rounded-xl pl-10 pr-4 py-3 text-sm font-semibold text-black dark:text-white focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 transition-all" placeholder="0.00" />
-                </div>
-              </div>
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1.5">Freight Cost (₹)</label>
-                  <input type="number" name="freightCost" value={formData.freightCost} onChange={handleChange} step="0.01" min="0" className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl px-4 py-3 text-sm text-black dark:text-white focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 transition-all shadow-sm" placeholder="0.00" />
-                </div>
-                <div>
-                  <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1.5">Other Charges (₹)</label>
-                  <input type="number" name="otherCharges" value={formData.otherCharges} onChange={handleChange} step="0.01" min="0" className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl px-4 py-3 text-sm text-black dark:text-white focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 transition-all shadow-sm" placeholder="0.00" />
-                </div>
-              </div>
-
-              {/* Premium Summary Box */}
-              <div className="mt-6 p-5 sm:p-6 rounded-2xl bg-gradient-to-br from-emerald-500/10 via-emerald-500/5 to-slate-900 border border-emerald-500/20 shadow-inner relative overflow-hidden">
-                <div className="absolute top-0 right-0 w-32 h-32 bg-emerald-500/10 rounded-full blur-2xl -translate-y-1/2 translate-x-1/2 pointer-events-none" />
-                
-                <div className="space-y-3 relative z-10">
-                  <div className="flex justify-between items-center text-sm border-b border-emerald-500/10 pb-3">
-                    <span className="text-slate-600 dark:text-slate-300 font-medium">Total Pieces</span>
-                    <span className="font-bold text-black dark:text-white bg-white/50 dark:bg-black/20 px-2 py-0.5 rounded-md">{totalPieces} units</span>
-                  </div>
-                  <div className="flex justify-between items-center text-sm border-b border-emerald-500/10 pb-3">
-                    <span className="text-slate-600 dark:text-slate-300 font-medium">Total Landed Cost</span>
-                    <span className="font-bold text-black dark:text-white bg-white/50 dark:bg-black/20 px-2 py-0.5 rounded-md">₹{totalLandedCost.toLocaleString('en-IN', {minimumFractionDigits: 2, maximumFractionDigits: 2})}</span>
-                  </div>
-                  <div className="flex justify-between items-end pt-3">
-                    <div>
-                      <span className="text-emerald-600 dark:text-emerald-400 font-black uppercase tracking-widest text-[10px] sm:text-xs block mb-1">Final Landed Cost</span>
-                      <span className="text-[10px] text-slate-500 dark:text-slate-400">per piece average</span>
-                    </div>
-                    <span className="font-black text-emerald-500 dark:text-emerald-400 text-2xl sm:text-3xl tracking-tighter leading-none">₹{landedCostPerPiece}</span>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          {/* ── RIGHT COLUMN (Supplier Info) ── */}
-          <div className="space-y-4 sm:space-y-5">
-            <h3 className="text-[11px] sm:text-xs font-black text-emerald-600 dark:text-emerald-400 uppercase tracking-widest border-b border-slate-200 dark:border-slate-800 pb-2">Supplier & Document Info</h3>
-            
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              <div className="sm:col-span-2">
-                <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1.5">Supplier Name</label>
-                <input type="text" name="supplierName" value={formData.supplierName} onChange={handleChange} className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl px-4 py-3 text-sm text-black dark:text-white focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 transition-all shadow-sm" placeholder="e.g. Global Imports Ltd" />
-              </div>
-              
-              <div>
-                <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1.5">Supplier Phone</label>
-                <input type="text" name="supplierPhone" value={formData.supplierPhone} onChange={handleChange} className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl px-4 py-3 text-sm text-black dark:text-white focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 transition-all shadow-sm" placeholder="+91..." />
-              </div>
-              
-              <div>
-                <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1.5">Supplier GST</label>
-                <input type="text" name="supplierGst" value={formData.supplierGst} onChange={handleChange} className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl px-4 py-3 text-sm text-black dark:text-white focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 transition-all shadow-sm" placeholder="GSTIN..." />
-              </div>
-              
-              <div className="sm:col-span-2">
-                <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1.5">Supplier Address</label>
-                <input type="text" name="supplierAddress" value={formData.supplierAddress} onChange={handleChange} className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl px-4 py-3 text-sm text-black dark:text-white focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 transition-all shadow-sm" placeholder="Full address..." />
-              </div>
-              
-              <div>
-                <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1.5">Invoice No.</label>
-                <input type="text" name="invoiceNo" value={formData.invoiceNo} onChange={handleChange} className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl px-4 py-3 text-sm font-mono text-black dark:text-white focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 transition-all shadow-sm" placeholder="INV-..." />
-              </div>
-              
-              <div>
-                <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1.5">PO No.</label>
-                <input type="text" name="poNo" value={formData.poNo} onChange={handleChange} className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl px-4 py-3 text-sm font-mono text-black dark:text-white focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 transition-all shadow-sm" placeholder="PO-..." />
-              </div>
-            </div>
-          </div>
-        </div>
-
-        {/* ── ACTION FOOTER ── */}
-        <div className="pt-6 sm:pt-8 mt-6 sm:mt-8 border-t border-slate-200 dark:border-slate-800 flex justify-end">
-          <button type="submit" className="w-full sm:w-auto px-8 py-3.5 sm:py-3 rounded-xl bg-emerald-500 text-slate-950 font-black flex items-center justify-center gap-2 hover:bg-emerald-400 transition-all shadow-lg shadow-emerald-500/25 active:scale-95 group">
-            <Save className="w-4 h-4 sm:w-5 sm:h-5 group-hover:rotate-12 transition-transform" />
-            <span className="text-sm sm:text-base tracking-tight">Save & Receive Inventory</span>
-            <ChevronRight className="w-4 h-4 sm:hidden ml-1" />
-          </button>
-        </div>
-      </form>
     </div>
   );
 };

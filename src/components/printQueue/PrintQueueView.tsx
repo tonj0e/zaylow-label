@@ -1,8 +1,7 @@
-import React, { useState, useRef, useCallback } from 'react';
+import React, { useDeferredValue, useMemo, useState } from 'react';
 import type { Order, PrintQueueItem, CompanySettings } from '../../types';
-import { ThermalLabel } from '../label/ThermalLabel';
-import html2canvas from 'html2canvas';
-import { Printer, Trash2, History, Play, Layers, Download } from 'lucide-react';
+import { Printer, Trash2, Play, Layers, Download, Search, Eye } from 'lucide-react';
+import { useLabelDownload } from '../../hooks/useLabelDownload';
 
 interface PrintQueueViewProps {
   queue: PrintQueueItem[];
@@ -13,284 +12,179 @@ interface PrintQueueViewProps {
   onPrintBulkOrders?: (orders: Order[]) => void;
 }
 
-export const PrintQueueView: React.FC<PrintQueueViewProps> = ({
-  queue,
-  allOrders,
-  settings,
-  onClearQueue,
-  onNavigateToGenerator,
-  onPrintBulkOrders
-}) => {
-  const [activeTab, setActiveTab] = useState<'queue' | 'history'>('queue');
+const HISTORY_STEP = 40;
+const inr = (n: number) => `₹${Math.round(n).toLocaleString('en-IN')}`;
 
-  const [downloadingId, setDownloadingId] = useState<string | null>(null);
-  const [downloadModalOrder, setDownloadModalOrder] = useState<Order | null>(null);
-  const downloadLabelRef = useRef<HTMLDivElement>(null);
+const dayLabel = (iso?: string) => {
+  if (!iso) return 'Earlier';
+  const d = new Date(iso);
+  const today = new Date();
+  const sameDay = (a: Date, b: Date) => a.toDateString() === b.toDateString();
+  const yesterday = new Date(today.getFullYear(), today.getMonth(), today.getDate() - 1);
+  if (sameDay(d, today)) return 'Today';
+  if (sameDay(d, yesterday)) return 'Yesterday';
+  return d.toLocaleDateString('en-IN', { day: 'numeric', month: 'long', year: 'numeric' });
+};
 
-  const handleDownloadLabel = useCallback(async (order: Order) => {
-    // Show the modal overlay with the label
-    setDownloadingId(order.id);
-    setDownloadModalOrder(order);
-    // Wait for modal + label to fully render with styles
-    await new Promise(r => setTimeout(r, 300));
-    if (downloadLabelRef.current) {
-      try {
-        const canvas = await html2canvas(downloadLabelRef.current, {
-          scale: 3,
-          useCORS: true,
-          backgroundColor: '#ffffff',
-          logging: false
-        });
-        const link = document.createElement('a');
-        link.download = `ZAYLOW-Label-${order.id}.png`;
-        link.href = canvas.toDataURL('image/png');
-        link.click();
-      } catch (e) {
-        console.error('Download failed', e);
-      }
-    }
-    setDownloadModalOrder(null);
-    setDownloadingId(null);
-  }, []);
+export const PrintQueueView: React.FC<PrintQueueViewProps> = ({ queue, allOrders, settings, onClearQueue, onNavigateToGenerator, onPrintBulkOrders }) => {
+  const [tab, setTab] = useState<'queue' | 'history'>('queue');
+  const [search, setSearch] = useState('');
+  const [shown, setShown] = useState(HISTORY_STEP);
+  const q = useDeferredValue(search.trim().toLowerCase());
+  const { download, downloadingId, overlay } = useLabelDownload(settings);
 
-  // Filter history: orders with status 'Printed' or 'Shipped'
-  const historyOrders = allOrders.filter(o => o.status === 'Printed' || o.status === 'Shipped');
+  const history = useMemo(() => {
+    const list = allOrders
+      .filter((o) => o.status === 'Printed' || o.status === 'Shipped')
+      .filter((o) => !q || [o.id, o.customer.name, o.customer.city, o.customer.phone, o.trackingNumber || ''].some((f) => (f || '').toLowerCase().includes(q)));
+    return list.sort((a, b) => new Date(b.printedAt || b.createdAt).getTime() - new Date(a.printedAt || a.createdAt).getTime());
+  }, [allOrders, q]);
 
-  const handleStartSequentialPrint = () => {
-    if (queue.length === 0) return;
-    if (onPrintBulkOrders) {
-      onPrintBulkOrders(queue.map(item => item.order));
-    }
-  };
+  const grouped = useMemo(() => {
+    const groups: { label: string; items: Order[] }[] = [];
+    history.slice(0, shown).forEach((o) => {
+      const label = dayLabel(o.printedAt || o.createdAt);
+      const last = groups[groups.length - 1];
+      if (last && last.label === label) last.items.push(o);
+      else groups.push({ label, items: [o] });
+    });
+    return groups;
+  }, [history, shown]);
+
+  const summary = useMemo(() => {
+    const cod = queue.filter((i) => i.order.paymentType === 'COD');
+    const byCourier: Record<string, number> = {};
+    queue.forEach((i) => { byCourier[i.order.courier] = (byCourier[i.order.courier] || 0) + 1; });
+    return {
+      cod: cod.length,
+      prepaid: queue.length - cod.length,
+      codTotal: cod.reduce((s, i) => s + i.order.codAmount, 0),
+      couriers: Object.entries(byCourier).sort((a, b) => b[1] - a[1]),
+    };
+  }, [queue]);
+
+  const startPrint = () => { if (queue.length && onPrintBulkOrders) onPrintBulkOrders(queue.map((i) => i.order)); };
+
+  const totalHistory = allOrders.filter((o) => o.status === 'Printed' || o.status === 'Shipped').length;
 
   return (
-    <div className="p-6 space-y-6 select-none max-w-6xl mx-auto">
-      {/* Header & Mode Switcher */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-        <div>
-          <div className="flex items-center gap-2 mb-1">
-            <Printer className="w-6 h-6 text-emerald-400" />
-            <h2 className="text-2xl font-black text-black dark:text-white tracking-tight">Print Queue & History</h2>
-          </div>
-          <p className="text-xs text-black dark:text-white">
-            Sequential bulk thermal printer job queue and historic reprint log.
-          </p>
-        </div>
-
-        <div className="flex items-center gap-2 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-1.5 rounded-xl">
-          <button
-            onClick={() => setActiveTab('queue')}
-            className={`px-4 py-2 rounded-lg text-xs font-bold transition ${
-              activeTab === 'queue'
-                ? 'bg-emerald-500 text-slate-950 shadow-md shadow-emerald-500/20'
-                : 'text-black dark:text-white hover:text-black dark:text-white'
-            }`}
-          >
-            Active Queue ({queue.length})
-          </button>
-          <button
-            onClick={() => setActiveTab('history')}
-            className={`px-4 py-2 rounded-lg text-xs font-bold transition ${
-              activeTab === 'history'
-                ? 'bg-emerald-500 text-slate-950 shadow-md shadow-emerald-500/20'
-                : 'text-black dark:text-white hover:text-black dark:text-white'
-            }`}
-          >
-            Print History ({historyOrders.length})
-          </button>
-        </div>
-      </div>
-
-      {/* QUEUE TAB CONTENT */}
-      {activeTab === 'queue' && (
-        <div className="space-y-6">
-          {/* Controls Bar */}
-          <div className="p-5 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 flex flex-col md:flex-row md:items-center justify-between gap-4">
+    <div className="kdash min-h-full p-3 sm:p-5 md:p-7 select-none pb-24 md:pb-10">
+      <div className="space-y-5">
+        <header className="k-rise flex flex-col md:flex-row md:items-end justify-between gap-4" style={{ ['--i' as string]: 0 }}>
+          <div className="flex items-center gap-4">
+            <span className="w-12 h-12 rounded-2xl k-card flex items-center justify-center shrink-0"><Printer className="w-6 h-6" /></span>
             <div>
-              <h3 className="font-bold text-black dark:text-white text-base">Sequential Bulk Thermal Printing</h3>
-              <p className="text-xs text-black dark:text-white mt-0.5">
-                Automatically prints <strong className="text-emerald-400">{queue.length} labels</strong> sequentially (Label 1 → Label 2 → Label N) on Helett 4×6 printer.
-              </p>
-            </div>
-
-            <div className="flex items-center gap-3">
-              <button
-                onClick={onClearQueue}
-                disabled={queue.length === 0}
-                className="px-4 py-2.5 rounded-xl bg-slate-50 dark:bg-slate-950 text-black dark:text-white text-xs font-bold border border-slate-200 dark:border-slate-800 hover:text-red-400 hover:border-red-500/30 disabled:opacity-30 transition flex items-center gap-2"
-              >
-                <Trash2 className="w-4 h-4" />
-                <span>Clear Queue</span>
-              </button>
-
-              <button
-                onClick={handleStartSequentialPrint}
-                disabled={queue.length === 0}
-                className="px-6 py-2.5 rounded-xl bg-emerald-500 text-slate-950 font-black text-xs hover:bg-emerald-400 shadow-xl shadow-emerald-500/20 disabled:opacity-40 transition flex items-center gap-2"
-              >
-                <Play className="w-4 h-4 fill-current" />
-                <span>Start Sequential Print</span>
-              </button>
+              <h2 className="text-3xl sm:text-4xl font-bold leading-none k-display">Print queue</h2>
+              <p className="text-sm k-muted mt-1.5">Labels print one after another on your 4×6 thermal printer.</p>
             </div>
           </div>
+          <div role="tablist" aria-label="Queue or history" className="k-card p-1 flex self-start md:self-auto" style={{ borderRadius: 999 }}>
+            {([['queue', `Queue ${queue.length}`], ['history', `History ${totalHistory}`]] as const).map(([id, label]) => (
+              <button key={id} role="tab" aria-selected={tab === id} onClick={() => setTab(id)} className={`px-5 py-2 rounded-full text-sm font-semibold transition-colors ${tab === id ? 'k-btn-ink' : 'k-muted'}`}>{label}</button>
+            ))}
+          </div>
+        </header>
 
-          {/* Progress Indicator removed because App.tsx handles global bulk print overlay */}
-          {/* Queue List */}
-          <div className="rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 overflow-hidden">
-            {queue.length === 0 ? (
-              <div className="p-12 text-center text-slate-400 dark:text-slate-500 space-y-2">
-                <Layers className="w-8 h-8 mx-auto text-slate-600 mb-2" />
-                <p className="font-bold text-black dark:text-white">Print Queue is Empty</p>
-                <p className="text-xs text-slate-400 dark:text-slate-500">
-                  Select orders from the Orders view and click "Add to Queue" or "Print Selected".
-                </p>
-              </div>
-            ) : (
-              <div className="overflow-x-auto">
-                <table className="w-full text-left text-xs text-black dark:text-white">
-                  <thead className="bg-slate-50 dark:bg-slate-950 text-black dark:text-white font-bold uppercase text-[10px] border-b border-slate-200 dark:border-slate-800">
-                    <tr>
-                      <th className="p-3.5">#</th>
-                      <th className="p-3.5">Order ID</th>
-                      <th className="p-3.5">Customer</th>
-                      <th className="p-3.5">Courier</th>
-                      <th className="p-3.5">Payment</th>
-                      <th className="p-3.5">Added At</th>
-                      <th className="p-3.5 text-right">Actions</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-800/60 font-medium">
-                    {queue.map((item, index) => (
-                      <tr key={item.id} className="hover:bg-slate-100 dark:bg-slate-800/40 transition">
-                        <td className="p-3.5 font-mono font-bold text-slate-400 dark:text-slate-500">{index + 1}</td>
-                        <td className="p-3.5 font-mono font-black text-emerald-400">{item.order.id}</td>
-                        <td className="p-3.5 font-bold text-black dark:text-white">{item.order.customer.name}</td>
-                        <td className="p-3.5">
-                          <span className="px-2 py-0.5 rounded bg-slate-100 dark:bg-slate-800 text-black dark:text-white font-bold text-[10px]">
-                            {item.order.courier}
-                          </span>
-                        </td>
-                        <td className="p-3.5">
-                          <span className={`font-bold ${item.order.paymentType === 'COD' ? 'text-amber-400' : 'text-emerald-400'}`}>
-                            {item.order.paymentType} {item.order.paymentType === 'COD' ? `(₹${item.order.codAmount})` : ''}
-                          </span>
-                        </td>
-                        <td className="p-3.5 font-mono text-black dark:text-white text-[11px]">
-                          {new Date(item.addedAt).toLocaleTimeString()}
-                        </td>
-                        <td className="p-3.5 text-right space-x-1.5">
-                          <button
-                            onClick={() => handleDownloadLabel(item.order)}
-                            disabled={downloadingId === item.order.id}
-                            className="px-2.5 py-1 rounded bg-slate-200 dark:bg-slate-700 text-black dark:text-white font-bold hover:bg-slate-600 transition text-[10px] inline-flex items-center gap-1 disabled:opacity-40"
-                            title="Download PNG"
-                          >
-                            <Download className="w-3 h-3" />
-                            <span>{downloadingId === item.order.id ? '...' : 'PNG'}</span>
-                          </button>
-                          <button
-                            onClick={() => onNavigateToGenerator(item.order)}
-                            className="px-2.5 py-1 rounded bg-slate-100 dark:bg-slate-800 text-emerald-400 font-bold hover:bg-emerald-500 hover:text-slate-950 transition text-[10px]"
-                          >
-                            Preview
-                          </button>
-                        </td>
-                      </tr>
+        {tab === 'queue' && (
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 md:gap-5 items-start tab-panel">
+            <section className="lg:col-span-8 k-card overflow-hidden k-rise" style={{ ['--i' as string]: 1 }} aria-label="Labels waiting to print">
+              {queue.length === 0 ? (
+                <div className="py-20 px-6 text-center">
+                  <span className="w-16 h-16 rounded-3xl k-card2 flex items-center justify-center mx-auto mb-4"><Layers className="w-8 h-8 k-lime-text" /></span>
+                  <h3 className="text-2xl font-bold k-display">Nothing waiting to print</h3>
+                  <p className="text-sm k-muted mt-2 max-w-sm mx-auto">Pick orders on the Orders or Print labels page and choose “Add to queue”. They will line up here.</p>
+                </div>
+              ) : (
+                <ol>
+                  {queue.map((item, i) => (
+                    <li key={item.id} className="flex items-center gap-4 px-4 md:px-5 py-4 border-t k-rule first:border-t-0">
+                      <span className="w-9 h-9 rounded-full k-card2 flex items-center justify-center text-sm font-bold shrink-0">{i + 1}</span>
+                      <div className="min-w-0 flex-1">
+                        <p className="font-semibold truncate">{item.order.customer.name}</p>
+                        <p className="text-xs k-muted truncate"><span className="font-mono">{item.order.id}</span> · {item.order.customer.city} · {item.order.courier}</p>
+                      </div>
+                      <div className="text-right hidden sm:block">
+                        <p className="text-sm font-bold">{item.order.paymentType === 'COD' ? inr(item.order.codAmount) : 'Prepaid'}</p>
+                        <p className="text-xs k-muted">added {new Date(item.addedAt).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}</p>
+                      </div>
+                      <div className="flex items-center gap-1.5">
+                        <button onClick={() => onNavigateToGenerator(item.order)} aria-label={`Preview label for ${item.order.id}`} title="Preview" className="w-9 h-9 rounded-full flex items-center justify-center k-btn-soft"><Eye className="w-4 h-4" /></button>
+                        <button onClick={() => download(item.order)} disabled={downloadingId === item.order.id} aria-label={`Download PNG of ${item.order.id}`} title="Download PNG" className="w-9 h-9 rounded-full flex items-center justify-center k-btn-soft disabled:opacity-40"><Download className="w-4 h-4" /></button>
+                      </div>
+                    </li>
+                  ))}
+                </ol>
+              )}
+            </section>
+
+            <aside className="lg:col-span-4 lg:sticky lg:top-24 k-card k-hot p-5 md:p-6 k-rise" style={{ ['--i' as string]: 2 }} aria-live="polite">
+              <p className="text-sm k-muted">Ready to print</p>
+              <p className="text-6xl font-bold k-display leading-none mt-2">{queue.length}</p>
+              <p className="text-sm k-muted mt-1">label{queue.length === 1 ? '' : 's'}</p>
+
+              {queue.length > 0 && (
+                <>
+                  <dl className="grid grid-cols-2 gap-3 mt-5 text-sm">
+                    <div className="rounded-2xl k-card2 p-3"><dt className="text-xs k-muted">COD</dt><dd className="font-bold text-lg">{summary.cod}</dd><dd className="text-xs k-muted">{inr(summary.codTotal)} to collect</dd></div>
+                    <div className="rounded-2xl k-card2 p-3"><dt className="text-xs k-muted">Prepaid</dt><dd className="font-bold text-lg">{summary.prepaid}</dd></div>
+                  </dl>
+                  <ul className="mt-4 space-y-2">
+                    {summary.couriers.map(([c, n]) => (
+                      <li key={c} className="text-sm">
+                        <div className="flex justify-between"><span className="font-semibold">{c}</span><span className="k-muted">{n}</span></div>
+                        <div className="h-1.5 rounded-full k-track mt-1 overflow-hidden"><div className="h-full k-bar bar-grow" style={{ width: `${(n / queue.length) * 100}%` }} /></div>
+                      </li>
                     ))}
-                  </tbody>
-                </table>
-              </div>
+                  </ul>
+                </>
+              )}
+
+              <button onClick={startPrint} disabled={queue.length === 0} className="k-btn k-btn-lime w-full mt-6 py-3.5 text-sm" style={{ boxShadow: queue.length ? '0 10px 28px -10px var(--lime)' : undefined }}>
+                <Play className="w-4 h-4" /> Print {queue.length || ''} label{queue.length === 1 ? '' : 's'}
+              </button>
+              <button onClick={onClearQueue} disabled={queue.length === 0} className="k-btn k-btn-ghost w-full mt-2 py-3 text-sm"><Trash2 className="w-4 h-4" /> Clear queue</button>
+            </aside>
+          </div>
+        )}
+
+        {tab === 'history' && (
+          <section className="tab-panel space-y-4" aria-label="Print history">
+            <div className="relative max-w-md">
+              <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 k-muted" />
+              <input type="search" value={search} onChange={(e) => { setSearch(e.target.value); setShown(HISTORY_STEP); }} aria-label="Search print history" placeholder="Order, name, city or tracking number" className="k-field" style={{ paddingLeft: '2.5rem', borderRadius: 999 }} />
+            </div>
+
+            {history.length === 0 ? (
+              <div className="k-card py-16 text-center text-sm k-muted">{q ? 'No printed order matches your search.' : 'Nothing has been printed yet.'}</div>
+            ) : (
+              grouped.map((g) => (
+                <div key={g.label} className="k-card overflow-hidden">
+                  <p className="px-5 py-3 text-sm font-semibold border-b k-rule">{g.label} <span className="k-muted font-normal">· {g.items.length}</span></p>
+                  <ul>
+                    {g.items.map((o) => (
+                      <li key={o.id} className="flex items-center gap-4 px-4 md:px-5 py-3.5 border-t k-rule first:border-t-0">
+                        <div className="min-w-0 flex-1">
+                          <p className="font-semibold truncate">{o.customer.name}</p>
+                          <p className="text-xs k-muted truncate"><span className="font-mono">{o.id}</span> · {o.customer.city}, {o.customer.pinCode} · {o.courier}</p>
+                        </div>
+                        <p className="text-xs k-muted hidden sm:block">{o.printedAt ? new Date(o.printedAt).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' }) : ''}</p>
+                        <p className="text-sm font-semibold hidden sm:block w-16 text-right">{o.paymentType === 'COD' ? inr(o.codAmount) : 'Prepaid'}</p>
+                        <button onClick={() => download(o)} disabled={downloadingId === o.id} aria-label={`Download PNG of ${o.id}`} title="Download PNG" className="w-9 h-9 rounded-full flex items-center justify-center k-btn-soft disabled:opacity-40"><Download className="w-4 h-4" /></button>
+                        <button onClick={() => onNavigateToGenerator(o)} className="k-btn k-btn-soft px-4 h-9 text-xs">Reprint</button>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              ))
             )}
-          </div>
-        </div>
-      )}
 
-      {/* HISTORY TAB CONTENT */}
-      {activeTab === 'history' && (
-        <div className="rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 overflow-hidden">
-          <div className="p-4 bg-slate-50 dark:bg-slate-950 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between">
-            <h3 className="font-bold text-black dark:text-white text-sm flex items-center gap-2">
-              <History className="w-4 h-4 text-emerald-400" />
-              <span>Label Generation & Print History Log</span>
-            </h3>
-            <span className="text-xs text-black dark:text-white font-mono">{historyOrders.length} Saved Records</span>
-          </div>
-
-          <div className="overflow-x-auto">
-            <table className="w-full text-left text-xs text-black dark:text-white">
-              <thead className="bg-slate-50 dark:bg-slate-950 text-black dark:text-white font-bold uppercase text-[10px] border-b border-slate-200 dark:border-slate-800">
-                <tr>
-                  <th className="p-3.5">Order ID</th>
-                  <th className="p-3.5">Customer & City</th>
-                  <th className="p-3.5">Printed Timestamp</th>
-                  <th className="p-3.5">Courier</th>
-                  <th className="p-3.5">Payment</th>
-                  <th className="p-3.5 text-right">Reprint Actions</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-800/60 font-medium">
-                {historyOrders.map((order) => (
-                  <tr key={order.id} className="hover:bg-slate-100 dark:bg-slate-800/40 transition">
-                    <td className="p-3.5 font-mono font-black text-emerald-400">{order.id}</td>
-                    <td className="p-3.5">
-                      <span className="font-bold text-black dark:text-white block">{order.customer.name}</span>
-                      <span className="text-[11px] text-black dark:text-white">{order.customer.city}, {order.customer.pinCode}</span>
-                    </td>
-                    <td className="p-3.5 font-mono text-[11px] text-black dark:text-white">
-                      {order.printedAt ? new Date(order.printedAt).toLocaleString() : 'Recently'}
-                    </td>
-                    <td className="p-3.5">
-                      <span className="px-2 py-0.5 rounded bg-slate-100 dark:bg-slate-800 text-black dark:text-white font-bold text-[10px]">
-                        {order.courier}
-                      </span>
-                    </td>
-                    <td className="p-3.5 font-bold text-emerald-400">{order.paymentType}</td>
-                    <td className="p-3.5 text-right space-x-1.5">
-                      <button
-                        onClick={() => handleDownloadLabel(order)}
-                        disabled={downloadingId === order.id}
-                        className="px-2.5 py-1 rounded bg-slate-200 dark:bg-slate-700 text-black dark:text-white font-bold hover:bg-slate-600 transition text-[10px] inline-flex items-center gap-1 disabled:opacity-40"
-                        title="Download PNG"
-                      >
-                        <Download className="w-3 h-3" />
-                        <span>{downloadingId === order.id ? '...' : 'PNG'}</span>
-                      </button>
-                      <button
-                        onClick={() => onNavigateToGenerator(order)}
-                        className="px-2.5 py-1 rounded bg-emerald-500 text-slate-950 font-bold hover:bg-emerald-400 transition text-[10px]"
-                      >
-                        Reprint
-                      </button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      )}
-
-      {/* Download Modal Overlay — renders label with full CSS then captures it */}
-      {downloadModalOrder && (
-        <div
-          className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/70"
-          aria-hidden="true"
-        >
-          <div className="flex flex-col items-center gap-4">
-            <div className="text-black dark:text-white text-sm font-bold animate-pulse flex items-center gap-2">
-              <Download className="w-4 h-4" />
-              Generating label for {downloadModalOrder.id}...
-            </div>
-            <div ref={downloadLabelRef} className="shadow-2xl">
-              <ThermalLabel
-                order={downloadModalOrder}
-                settings={settings}
-                scale={1}
-              />
-            </div>
-          </div>
-        </div>
-      )}
+            {history.length > shown && (
+              <button onClick={() => setShown((n) => n + HISTORY_STEP)} className="k-btn k-btn-ghost mx-auto px-6 py-3 text-sm">Show {Math.min(HISTORY_STEP, history.length - shown)} more of {history.length - shown} left</button>
+            )}
+          </section>
+        )}
+      </div>
+      {overlay}
     </div>
   );
 };

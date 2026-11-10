@@ -1,22 +1,11 @@
-import React, { useRef, useState, useEffect } from 'react';
+import React, { useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
 import type { Order, CompanySettings } from '../../types';
 import { ThermalLabel } from '../label/ThermalLabel';
 import { PDFGeneratorService } from '../../services/pdfGenerator';
 import { ThermalPrinterService } from '../../services/thermalPrinter';
 import { LABEL_SIZES, DEFAULT_LABEL_SIZE } from '../../constants/labelSizes';
 import type { LabelSize } from '../../constants/labelSizes';
-import {
-  Printer,
-  FileDown,
-  Copy,
-  PlusCircle,
-  Sliders,
-  ChevronLeft,
-  ChevronRight,
-  CheckCircle2,
-  Tag,
-  Layers
-} from 'lucide-react';
+import { Printer, FileDown, Copy, ListPlus, ChevronLeft, ChevronRight, Search, Minus, Plus, Check } from 'lucide-react';
 
 interface LabelGeneratorViewProps {
   selectedOrder: Order | null;
@@ -27,66 +16,88 @@ interface LabelGeneratorViewProps {
   onDuplicateOrder: (order: Order) => void;
 }
 
+type Filter = 'all' | 'todo' | 'printed';
+
+const MM_TO_PX = 3.779527;
+const ROW = 66;
+const TO_PRINT = ['Pending', 'Processing', 'Label Generated'];
+const DOT: Record<string, string> = {
+  Pending: '#f5a623', Processing: '#4f9bff', 'Label Generated': '#a78bfa', Printed: '#22c55e',
+  Shipped: '#22d3ee', Delivered: '#3fb950', Cancelled: '#ff5a45', Claims: '#f472b6', Returned: '#fb923c',
+};
+
+const Row: React.FC<{ label: string; children: React.ReactNode }> = ({ label, children }) => (
+  <div className="flex justify-between gap-4 py-2.5 border-t k-rule first:border-t-0">
+    <dt className="k-muted shrink-0">{label}</dt>
+    <dd className="min-w-0 text-right truncate">{children}</dd>
+  </div>
+);
+
 export const LabelGeneratorView: React.FC<LabelGeneratorViewProps> = ({
-  selectedOrder,
-  allOrders,
-  settings,
-  onSelectOrder,
-  onAddToQueue,
-  onDuplicateOrder
+  selectedOrder, allOrders, settings, onSelectOrder, onAddToQueue, onDuplicateOrder,
 }) => {
   const labelRef = useRef<HTMLDivElement>(null);
-  const [zoomScale, setZoomScale] = useState<number>(1);
-  const [isGeneratingPdf, setIsGeneratingPdf] = useState<boolean>(false);
-  const [copiedNotification, setCopiedNotification] = useState<boolean>(false);
-  const [selectedSize, setSelectedSize] = useState<LabelSize>(DEFAULT_LABEL_SIZE);
-  const [copyCount, setCopyCount] = useState<number>(1);
+  const listRef = useRef<HTMLDivElement>(null);
+  const [zoomScale, setZoomScale] = useState(1);
+  const [size, setSize] = useState<LabelSize>(DEFAULT_LABEL_SIZE);
+  const [copies, setCopies] = useState(1);
+  const [pdfBusy, setPdfBusy] = useState(false);
+  const [dup, setDup] = useState(false);
+  const [filter, setFilter] = useState<Filter>('all');
+  const [search, setSearch] = useState('');
+  const [picked, setPicked] = useState<Set<string>>(new Set());
+  const [scrollTop, setScrollTop] = useState(0);
+  const [viewH, setViewH] = useState(520);
+  const q = useDeferredValue(search.trim().toLowerCase());
 
-  // Auto-scale down on mobile for a perfect preview fit
+  useEffect(() => { if (window.innerWidth < 768) setZoomScale(0.75); }, []);
+
   useEffect(() => {
-    if (typeof window !== 'undefined' && window.innerWidth < 768) {
-      setZoomScale(0.75);
-    }
+    const el = listRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver(() => setViewH(el.clientHeight || 520));
+    ro.observe(el);
+    return () => ro.disconnect();
   }, []);
 
   const activeOrder = selectedOrder || allOrders[0];
 
+  const rows = useMemo(() => allOrders.filter((o) => {
+    if (filter === 'todo' && !TO_PRINT.includes(o.status)) return false;
+    if (filter === 'printed' && o.status !== 'Printed') return false;
+    if (!q) return true;
+    return [o.id, o.customer.name, o.customer.phone, o.customer.city, o.trackingNumber || ''].some((f) => (f || '').toLowerCase().includes(q));
+  }), [allOrders, filter, q]);
+
+  const counts = useMemo(() => ({ todo: allOrders.filter((o) => TO_PRINT.includes(o.status)).length, printed: allOrders.filter((o) => o.status === 'Printed').length }), [allOrders]);
+
+  // keep the active order in view when it changes (prev / next, search, jumping in from other pages)
+  const activeId = activeOrder?.id;
+  useEffect(() => {
+    const el = listRef.current;
+    if (!el || !activeId) return;
+    const idx = rows.findIndex((o) => o.id === activeId);
+    if (idx < 0) return;
+    const top = idx * ROW;
+    if (top < el.scrollTop || top + ROW > el.scrollTop + el.clientHeight) el.scrollTo({ top: Math.max(0, top - ROW * 2), behavior: 'smooth' });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeId]);
+
   if (!activeOrder) {
-    return (
-      <div className="p-12 text-center text-slate-400 dark:text-slate-500">
-        No orders available. Please create an order or import sample data first.
-      </div>
-    );
+    return <div className="kdash min-h-full p-12 text-center k-muted">No orders yet. Create an order and its label will appear here.</div>;
   }
 
-  const currentIndex = allOrders.findIndex(o => o.id === activeOrder.id);
+  const idx = allOrders.findIndex((o) => o.id === activeOrder.id);
+  const prev = () => idx > 0 && onSelectOrder(allOrders[idx - 1]);
+  const next = () => idx < allOrders.length - 1 && onSelectOrder(allOrders[idx + 1]);
 
-  const handlePrev = () => {
-    if (currentIndex > 0) {
-      onSelectOrder(allOrders[currentIndex - 1]);
-    }
-  };
-
-  const handleNext = () => {
-    if (currentIndex < allOrders.length - 1) {
-      onSelectOrder(allOrders[currentIndex + 1]);
-    }
-  };
-
-  const handlePrintSingle = async () => {
+  const print = async () => {
     if (!labelRef.current) return;
     try {
-      const labelHtml = labelRef.current.outerHTML;
-      console.log('[Print] label outerHTML length:', labelHtml.length, 'first 200 chars:', labelHtml.slice(0,200));
-      // Print multiple copies
-      for (let i = 0; i < copyCount; i++) {
-        // Use ThermalPrinterService for actual printing
-        ThermalPrinterService.printLabelHTML(labelHtml, activeOrder.id);
-
-        // Small delay between prints to avoid overwhelming the print queue
-        if (i < copyCount - 1) {
-          await new Promise(resolve => setTimeout(resolve, 500));
-        }
+      const html = labelRef.current.outerHTML;
+      for (let i = 0; i < copies; i++) {
+        ThermalPrinterService.printLabelHTML(html, activeOrder.id);
+        if (i < copies - 1) await new Promise((r) => setTimeout(r, 500));
       }
     } catch (err) {
       console.error('Print failed:', err);
@@ -94,257 +105,190 @@ export const LabelGeneratorView: React.FC<LabelGeneratorViewProps> = ({
     }
   };
 
-  const handleDownloadPDF = async () => {
+  const pdf = async () => {
     if (!labelRef.current) return;
-    setIsGeneratingPdf(true);
+    setPdfBusy(true);
     try {
-      await PDFGeneratorService.generateSinglePDF(
-        labelRef.current,
-        `Label_${activeOrder.id}_${activeOrder.customer.name.replace(/\s+/g, '_')}.pdf`
-      );
+      await PDFGeneratorService.generateSinglePDF(labelRef.current, `Label_${activeOrder.id}_${activeOrder.customer.name.replace(/\s+/g, '_')}.pdf`);
     } finally {
-      setIsGeneratingPdf(false);
+      setPdfBusy(false);
     }
   };
 
-  const handleDuplicate = () => {
-    onDuplicateOrder(activeOrder);
-    setCopiedNotification(true);
-    setTimeout(() => setCopiedNotification(false), 3000);
+  const duplicate = () => { onDuplicateOrder(activeOrder); setDup(true); setTimeout(() => setDup(false), 2500); };
+
+  const toggle = (id: string) => setPicked((p) => { const n = new Set(p); if (n.has(id)) n.delete(id); else n.add(id); return n; });
+  const allVisiblePicked = rows.length > 0 && rows.every((o) => picked.has(o.id));
+  const pickVisible = () => setPicked(allVisiblePicked ? new Set() : new Set(rows.map((o) => o.id)));
+  const queuePicked = () => {
+    const list = allOrders.filter((o) => picked.has(o.id));
+    if (list.length) { onAddToQueue(list); setPicked(new Set()); }
   };
 
+  const start = Math.max(0, Math.floor(scrollTop / ROW) - 6);
+  const end = Math.min(rows.length, Math.ceil((scrollTop + viewH) / ROW) + 6);
+  const visible = rows.slice(start, end);
+
+  const stageW = size.widthMm * MM_TO_PX * zoomScale;
+  const stageH = size.heightMm * MM_TO_PX * zoomScale;
+
   return (
-    <div className="p-4 md:p-6 space-y-4 md:space-y-6 select-none pb-24 md:pb-6 max-w-7xl mx-auto">
-      {/* Top Header & Navigation Bar */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-        <div className="flex items-start md:items-center gap-3">
-          <div className="w-10 h-10 md:w-12 md:h-12 rounded-xl bg-emerald-500/10 flex flex-shrink-0 items-center justify-center text-emerald-500 dark:text-emerald-400 ring-1 ring-inset ring-emerald-500/20 shadow-sm">
-            <Tag className="w-5 h-5 md:w-6 md:h-6" />
-          </div>
+    <div className="kdash min-h-full p-3 sm:p-5 md:p-7 select-none pb-24 md:pb-7">
+      <div className="max-w-[1500px] mx-auto">
+        <header className="k-rise mb-4 flex items-end justify-between gap-3 flex-wrap" style={{ ['--i' as string]: 0 }}>
           <div>
-            <h2 className="text-xl md:text-2xl font-black text-black dark:text-white tracking-tight">Label Studio</h2>
-            <p className="text-[11px] md:text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-              Print label for order <strong className="text-emerald-600 dark:text-emerald-400 font-bold">#{activeOrder.id}</strong>
-            </p>
+            <h2 className="text-3xl sm:text-4xl font-bold leading-none k-display">Print labels</h2>
+            <p className="text-sm k-muted mt-2">{counts.todo} waiting to print · {counts.printed} printed · {allOrders.length} orders</p>
           </div>
-        </div>
+        </header>
 
-        {/* Order Switcher Controls */}
-        <div className="flex items-center gap-2 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-1.5 rounded-xl shadow-sm self-start md:self-auto w-full md:w-auto justify-between md:justify-start">
-          <button
-            disabled={currentIndex <= 0}
-            onClick={handlePrev}
-            className="p-2 md:p-1.5 rounded-lg bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 disabled:opacity-30 hover:bg-slate-100 dark:hover:bg-slate-800 text-black dark:text-white transition-colors"
-          >
-            <ChevronLeft className="w-4 h-4" />
-          </button>
-          <span className="text-[11px] md:text-xs font-mono font-bold text-slate-600 dark:text-slate-300 px-4 md:px-3 uppercase tracking-widest">
-            {currentIndex + 1} of {allOrders.length}
-          </span>
-          <button
-            disabled={currentIndex >= allOrders.length - 1}
-            onClick={handleNext}
-            className="p-2 md:p-1.5 rounded-lg bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 disabled:opacity-30 hover:bg-slate-100 dark:hover:bg-slate-800 text-black dark:text-white transition-colors"
-          >
-            <ChevronRight className="w-4 h-4" />
-          </button>
-        </div>
-      </div>
-
-      {/* Workspace Grid */}
-      <div className="flex flex-col lg:grid lg:grid-cols-12 gap-4 lg:gap-6">
-        
-        {/* Mobile-first: Preview goes on top on mobile, on right on desktop */}
-        <div className="order-1 lg:order-2 lg:col-span-8 flex flex-col items-center justify-center p-4 lg:p-8 bg-slate-50/50 dark:bg-slate-950/50 rounded-2xl border border-slate-200/70 dark:border-slate-800/70 min-h-[480px] lg:min-h-[640px] overflow-hidden relative shadow-inner">
-          <div className="mb-4 lg:mb-6 flex flex-col items-center gap-1 w-full max-w-sm bg-white dark:bg-slate-900 px-3 py-2 rounded-xl shadow-sm border border-slate-200/50 dark:border-slate-800/50 mx-auto">
-            <div className="flex items-center gap-2 justify-center">
-              <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500" />
-              <span className="text-[10px] md:text-xs font-mono font-bold text-slate-600 dark:text-slate-400">
-                {selectedSize.widthMm}×{selectedSize.heightMm}mm ({selectedSize.name})
-              </span>
-            </div>
-          </div>
-
-          <div className="flex-1 w-full flex items-center justify-center overflow-x-auto overflow-y-hidden px-2 lg:px-0">
-            <div 
-              className="relative"
-              style={{
-                width: `${(selectedSize.widthMm * 3.779527) * zoomScale}px`,
-                height: `${(selectedSize.heightMm * 3.779527) * zoomScale}px`
-              }}
-            >
-              <div
-                className="absolute top-0 left-0 transition-transform duration-300 shadow-2xl rounded-sm border-2 border-slate-200 dark:border-slate-800 overflow-hidden bg-white origin-top-left"
-                style={{ transform: `scale(${zoomScale})` }}
-              >
-                <ThermalLabel
-                  innerRef={labelRef as React.RefObject<HTMLDivElement>}
-                  order={activeOrder}
-                  settings={settings}
-                  labelSize={selectedSize}
-                  scale={1}
-                />
+        <div className="grid grid-cols-1 lg:grid-cols-[320px_minmax(0,1fr)_330px] gap-4 lg:h-[calc(100vh-11rem)] lg:min-h-[600px]">
+          {/* order queue */}
+          <section className="k-card order-2 lg:order-1 flex flex-col overflow-hidden k-rise min-h-[360px] max-h-[520px] lg:max-h-none" style={{ ['--i' as string]: 1 }} aria-label="Orders">
+            <div className="p-3 space-y-3 border-b k-rule">
+              <div className="relative">
+                <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 k-muted" />
+                <input type="search" value={search} onChange={(e) => { setSearch(e.target.value); listRef.current?.scrollTo({ top: 0 }); }} aria-label="Find an order" placeholder="Order, name, phone, tracking" className="k-field" style={{ paddingLeft: '2.5rem', borderRadius: 999, paddingTop: '.6rem', paddingBottom: '.6rem' }} />
+              </div>
+              <div className="flex gap-2" role="group" aria-label="Filter orders">
+                {([['all', `All ${allOrders.length}`], ['todo', `To print ${counts.todo}`], ['printed', `Printed ${counts.printed}`]] as const).map(([id, label]) => (
+                  <button key={id} className="k-chip" style={{ padding: '.3rem .7rem', fontSize: '.75rem' }} aria-pressed={filter === id} onClick={() => { setFilter(id); listRef.current?.scrollTo({ top: 0 }); }}>{label}</button>
+                ))}
+              </div>
+              <div className="flex items-center justify-between text-xs">
+                <button onClick={pickVisible} className="font-semibold k-muted hover:opacity-80">{allVisiblePicked ? 'Clear selection' : `Select ${rows.length} shown`}</button>
+                {picked.size > 0 && <button onClick={queuePicked} className="k-btn k-btn-lime px-3 py-1.5 text-xs"><ListPlus className="w-3.5 h-3.5" /> Queue {picked.size}</button>}
               </div>
             </div>
-          </div>
-        </div>
 
-        {/* Toolbar & Order Details */}
-        <div className="order-2 lg:order-1 lg:col-span-4 space-y-4">
-          {/* Action Card */}
-          <div className="p-4 md:p-5 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200/70 dark:border-slate-800/70 shadow-sm space-y-4">
-            <h3 className="text-[10px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-widest mb-1">Print Actions</h3>
+            <div ref={listRef} onScroll={(e) => setScrollTop(e.currentTarget.scrollTop)} className="flex-1 min-h-0 overflow-y-auto" role="listbox" aria-label="Order list">
+              {rows.length === 0 ? (
+                <p className="p-8 text-center text-sm k-muted">No order matches.</p>
+              ) : (
+                <div style={{ height: rows.length * ROW, position: 'relative' }}>
+                  {visible.map((o, i) => {
+                    const on = o.id === activeOrder.id;
+                    const isPicked = picked.has(o.id);
+                    return (
+                      <div
+                        key={o.id}
+                        role="option"
+                        aria-selected={on}
+                        className="absolute left-0 right-0 flex items-center gap-3 px-3 border-b k-rule cursor-pointer"
+                        style={{ top: (start + i) * ROW, height: ROW, background: on ? 'color-mix(in srgb, var(--lime) 14%, transparent)' : undefined, boxShadow: on ? 'inset 3px 0 0 var(--lime)' : undefined }}
+                        onClick={() => onSelectOrder(o)}
+                      >
+                        <button
+                          onClick={(e) => { e.stopPropagation(); toggle(o.id); }}
+                          aria-label={isPicked ? `Unselect ${o.id}` : `Select ${o.id}`}
+                          aria-pressed={isPicked}
+                          className="w-5 h-5 rounded-md flex items-center justify-center shrink-0 border"
+                          style={{ background: isPicked ? 'var(--lime)' : 'transparent', borderColor: isPicked ? 'var(--lime)' : 'var(--line)', color: 'var(--on-lime)' }}
+                        >
+                          {isPicked && <Check className="w-3.5 h-3.5" />}
+                        </button>
+                        <span className="w-2 h-2 rounded-full shrink-0" style={{ background: DOT[o.status] || '#94a3b8' }} title={o.status} />
+                        <span className="min-w-0 flex-1">
+                          <span className="block text-sm font-semibold truncate">{o.customer.name}</span>
+                          <span className="block text-xs k-muted truncate">{o.id} · {o.customer.city}</span>
+                        </span>
+                        <span className="text-xs font-semibold shrink-0">{o.paymentType === 'COD' ? `₹${o.codAmount}` : 'Paid'}</span>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          </section>
 
-            <button
-              onClick={handlePrintSingle}
-              className="w-full py-3.5 md:py-3 px-4 rounded-xl bg-emerald-500 text-slate-950 font-black text-sm hover:bg-emerald-400 shadow-lg shadow-emerald-500/20 transition-all flex items-center justify-center gap-2 transform active:scale-95"
-            >
-              <Printer className="w-5 h-5 stroke-[2.5]" />
-              <span>Print Label Now</span>
-            </button>
-
-            <button
-              disabled={isGeneratingPdf}
-              onClick={handleDownloadPDF}
-              className="w-full py-3 md:py-2.5 px-4 rounded-xl bg-slate-50 dark:bg-slate-950 text-black dark:text-white font-bold text-xs hover:bg-slate-100 dark:hover:bg-slate-800 border border-slate-200 dark:border-slate-800 transition-all flex items-center justify-center gap-2 transform active:scale-95"
-            >
-              <FileDown className="w-4 h-4 text-emerald-500 dark:text-emerald-400" />
-              <span>{isGeneratingPdf ? 'Generating PDF...' : 'Download PDF File'}</span>
-            </button>
-
-            <div className="grid grid-cols-2 gap-3 pt-1">
-              <button
-                onClick={() => onAddToQueue([activeOrder])}
-                className="py-2.5 px-3 rounded-xl bg-slate-50 dark:bg-slate-950 text-black dark:text-white text-xs font-bold border border-slate-200 dark:border-slate-800 hover:border-slate-300 dark:hover:border-slate-700 transition-colors flex items-center justify-center gap-1.5"
-              >
-                <PlusCircle className="w-3.5 h-3.5 text-blue-500 dark:text-blue-400" />
-                <span>Add to Queue</span>
-              </button>
-
-              <button
-                onClick={handleDuplicate}
-                className="py-2.5 px-3 rounded-xl bg-slate-50 dark:bg-slate-950 text-black dark:text-white text-xs font-bold border border-slate-200 dark:border-slate-800 hover:border-slate-300 dark:hover:border-slate-700 transition-colors flex items-center justify-center gap-1.5"
-              >
-                <Copy className="w-3.5 h-3.5 text-indigo-500 dark:text-indigo-400" />
-                <span>{copiedNotification ? 'Duplicated!' : 'Duplicate'}</span>
-              </button>
+          {/* stage */}
+          <section
+            className="k-card order-1 lg:order-2 flex flex-col items-center overflow-hidden relative k-rise min-h-[460px]"
+            style={{ ['--i' as string]: 2, backgroundImage: 'radial-gradient(var(--line) 1px, transparent 1px)', backgroundSize: '18px 18px' }}
+            aria-label="Label preview"
+          >
+            <div className="w-full flex items-center justify-between p-3">
+              <div className="k-card flex items-center gap-1 p-1" style={{ borderRadius: 999 }}>
+                <button disabled={idx <= 0} onClick={prev} aria-label="Previous order" className="k-btn w-9 h-9 disabled:opacity-30"><ChevronLeft className="w-4 h-4" /></button>
+                <span className="text-xs font-semibold px-2 min-w-[5.5rem] text-center">{idx + 1} of {allOrders.length}</span>
+                <button disabled={idx >= allOrders.length - 1} onClick={next} aria-label="Next order" className="k-btn w-9 h-9 disabled:opacity-30"><ChevronRight className="w-4 h-4" /></button>
+              </div>
+              <p className="text-xs font-semibold rounded-full px-3 py-2 k-card" style={{ borderRadius: 999 }}>{size.widthMm}×{size.heightMm} mm</p>
             </div>
 
-            {/* Copy Count Selector */}
-            <div className="pt-3 border-t border-slate-100 dark:border-slate-800/60 flex items-center justify-between">
+            <div className="flex-1 w-full overflow-auto flex items-start justify-center px-4 pb-24 pt-2">
+              <div className="relative shrink-0" style={{ width: stageW, height: stageH }}>
+                <div className="absolute top-0 left-0 bg-white origin-top-left overflow-hidden" style={{ transform: `scale(${zoomScale})`, transition: 'transform .25s cubic-bezier(.22,1,.36,1)', boxShadow: '0 30px 60px -22px rgba(0,0,0,.5)', borderRadius: 2 }}>
+                  <ThermalLabel innerRef={labelRef as React.RefObject<HTMLDivElement>} order={activeOrder} settings={settings} labelSize={size} scale={1} />
+                </div>
+              </div>
+            </div>
+
+            <div className="absolute bottom-4 left-1/2 -translate-x-1/2 k-card flex items-center gap-1 p-1 shadow-xl" style={{ borderRadius: 999 }}>
+              <button onClick={() => setZoomScale((z) => Math.max(0.3, +(z - 0.1).toFixed(2)))} aria-label="Zoom out" className="k-btn w-9 h-9"><Minus className="w-4 h-4" /></button>
+              <button onClick={() => setZoomScale(1)} aria-label="Reset zoom" className="text-xs font-semibold w-14 text-center">{Math.round(zoomScale * 100)}%</button>
+              <button onClick={() => setZoomScale((z) => Math.min(1.5, +(z + 0.1).toFixed(2)))} aria-label="Zoom in" className="k-btn w-9 h-9"><Plus className="w-4 h-4" /></button>
+            </div>
+          </section>
+
+          {/* actions */}
+          <aside className="order-3 space-y-4 lg:overflow-y-auto lg:pr-1" aria-label="Print actions">
+            <div className="k-card k-hot p-5 space-y-3 k-rise" style={{ ['--i' as string]: 3 }}>
               <div>
-                <label className="block text-[10px] font-black text-slate-500 dark:text-slate-400 uppercase tracking-widest">Copies</label>
-                <p className="text-[10px] text-black dark:text-white mt-0.5 font-medium">
-                  Will print {copyCount} label{copyCount !== 1 ? 's' : ''}
-                </p>
+                <p className="text-xs k-muted">Selected order</p>
+                <p className="font-semibold truncate">{activeOrder.customer.name}</p>
+                <p className="text-xs k-muted font-mono">{activeOrder.id}</p>
               </div>
-              <div className="flex items-center gap-1.5 bg-slate-50 dark:bg-slate-950 p-1 rounded-xl border border-slate-200 dark:border-slate-800">
-                <button
-                  onClick={() => setCopyCount(Math.max(1, copyCount - 1))}
-                  className="w-8 h-8 rounded-lg text-slate-500 hover:text-black dark:hover:text-white hover:bg-white dark:hover:bg-slate-800 transition-colors flex items-center justify-center"
-                >
-                  <span className="text-lg leading-none font-bold mb-1">-</span>
-                </button>
-                <span className="w-6 text-center font-mono text-sm font-black text-emerald-600 dark:text-emerald-400">{copyCount}</span>
-                <button
-                  onClick={() => setCopyCount(copyCount + 1)}
-                  className="w-8 h-8 rounded-lg text-slate-500 hover:text-black dark:hover:text-white hover:bg-white dark:hover:bg-slate-800 transition-colors flex items-center justify-center"
-                >
-                  <span className="text-lg leading-none font-bold mb-0.5">+</span>
-                </button>
+              <button onClick={print} className="k-btn k-btn-lime w-full py-3.5 text-sm" style={{ boxShadow: '0 10px 28px -10px var(--lime)' }}>
+                <Printer className="w-5 h-5" /> Print {copies} label{copies !== 1 ? 's' : ''}
+              </button>
+              <button disabled={pdfBusy} onClick={pdf} className="k-btn k-btn-ghost w-full py-3 text-sm"><FileDown className="w-4 h-4" /> {pdfBusy ? 'Making PDF…' : 'Download PDF'}</button>
+              <div className="grid grid-cols-2 gap-3">
+                <button onClick={() => onAddToQueue([activeOrder])} className="k-btn k-btn-ghost py-2.5 text-xs"><ListPlus className="w-4 h-4" /> Add to queue</button>
+                <button onClick={duplicate} className="k-btn k-btn-ghost py-2.5 text-xs"><Copy className="w-4 h-4" /> {dup ? 'Duplicated' : 'Duplicate'}</button>
               </div>
-            </div>
-          </div>
-
-          {/* Label Display Controls */}
-          <div className="p-4 md:p-5 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200/70 dark:border-slate-800/70 shadow-sm space-y-3">
-            <h3 className="text-[10px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-widest flex items-center gap-1.5">
-              <Sliders className="w-3.5 h-3.5 text-blue-500 dark:text-blue-400" />
-              <span>Preview Zoom Scale</span>
-            </h3>
-
-            <div className="flex items-center gap-3">
-              <input
-                type="range"
-                min="0.3"
-                max="1.5"
-                step="0.05"
-                value={zoomScale}
-                onChange={(e) => setZoomScale(parseFloat(e.target.value))}
-                className="w-full accent-blue-500 cursor-pointer h-1.5 bg-slate-200 dark:bg-slate-800 rounded-lg appearance-none"
-              />
-              <span className="font-mono text-[10px] bg-blue-500/10 text-blue-600 dark:text-blue-400 font-bold px-2 py-1 rounded-lg min-w-[48px] text-center">
-                {Math.round(zoomScale * 100)}%
-              </span>
-            </div>
-          </div>
-
-          {/* Label Size Selector */}
-          <div className="p-4 md:p-5 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200/70 dark:border-slate-800/70 shadow-sm space-y-3">
-            <h3 className="text-[10px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-widest flex items-center gap-1.5">
-              <Layers className="w-3.5 h-3.5 text-indigo-500 dark:text-indigo-400" />
-              <span>Label Size</span>
-            </h3>
-            <div className="space-y-2 max-h-48 overflow-y-auto pr-1 pb-1">
-              {LABEL_SIZES.map((size) => (
-                <button
-                  key={size.id}
-                  onClick={() => setSelectedSize(size)}
-                  className={`w-full text-left px-3.5 py-2.5 rounded-xl border transition-all ${
-                    selectedSize.id === size.id
-                      ? 'bg-indigo-500/5 border-indigo-500/40 shadow-sm ring-1 ring-inset ring-indigo-500/10'
-                      : 'bg-slate-50 dark:bg-slate-950 border-slate-200 dark:border-slate-800 hover:border-slate-300 dark:hover:border-slate-700'
-                  }`}
-                >
-                  <div className="flex items-center justify-between mb-0.5">
-                    <span className={`font-bold text-xs ${selectedSize.id === size.id ? 'text-indigo-600 dark:text-indigo-400' : 'text-black dark:text-white'}`}>
-                      {size.name}
-                    </span>
-                    {size.popular && (
-                      <span className="text-[9px] font-black uppercase tracking-wider bg-emerald-500 text-slate-950 px-1.5 py-0.5 rounded shadow-sm">Popular</span>
-                    )}
-                  </div>
-                  <p className="text-[10px] text-slate-500 dark:text-slate-400 leading-tight pr-4">{size.description}</p>
-                </button>
-              ))}
-            </div>
-          </div>
-
-          {/* Selected Order Summary */}
-          <div className="p-4 md:p-5 rounded-2xl bg-slate-50 dark:bg-slate-950 border border-slate-200/70 dark:border-slate-800/70 shadow-inner">
-            <h3 className="font-black text-slate-400 dark:text-slate-500 uppercase tracking-widest block text-[10px] mb-3">Order Details</h3>
-            
-            <div className="space-y-2.5 text-[11px] md:text-xs">
-              <div className="flex justify-between items-center pb-2.5 border-b border-slate-200 dark:border-slate-800/60">
-                <span className="text-slate-500 dark:text-slate-400 font-medium">Order ID</span>
-                <span className="font-mono font-black text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded-md">{activeOrder.id}</span>
-              </div>
-              <div className="flex justify-between items-center pb-2.5 border-b border-slate-200 dark:border-slate-800/60">
-                <span className="text-slate-500 dark:text-slate-400 font-medium">Recipient</span>
-                <span className="font-bold text-black dark:text-white truncate max-w-[160px]">{activeOrder.customer.name}</span>
-              </div>
-              <div className="flex justify-between items-center pb-2.5 border-b border-slate-200 dark:border-slate-800/60">
-                <span className="text-slate-500 dark:text-slate-400 font-medium">Phone</span>
-                <span className="font-mono font-medium text-black dark:text-white">{activeOrder.customer.phone}</span>
-              </div>
-              <div className="flex justify-between items-center pb-2.5 border-b border-slate-200 dark:border-slate-800/60">
-                <span className="text-slate-500 dark:text-slate-400 font-medium">City / PIN</span>
-                <span className="font-semibold text-black dark:text-white truncate max-w-[160px]">{activeOrder.customer.city} ({activeOrder.customer.pinCode})</span>
-              </div>
-              <div className="flex justify-between items-center pb-2.5 border-b border-slate-200 dark:border-slate-800/60">
-                <span className="text-slate-500 dark:text-slate-400 font-medium">Courier</span>
-                <span className="font-bold text-black dark:text-white">{activeOrder.courier}</span>
-              </div>
-              <div className="flex justify-between items-center pt-1">
-                <span className="text-slate-500 dark:text-slate-400 font-medium">Payment</span>
-                <span className={`font-black tracking-wide ${activeOrder.paymentType === 'COD' ? 'text-amber-500 dark:text-amber-400' : 'text-emerald-500 dark:text-emerald-400'}`}>
-                  {activeOrder.paymentType} {activeOrder.paymentType === 'COD' ? `(₹${activeOrder.codAmount})` : ''}
-                </span>
+              <div className="pt-3 border-t k-rule flex items-center justify-between">
+                <p className="text-sm font-semibold">Copies</p>
+                <div className="flex items-center gap-1 rounded-full k-card2 p-1">
+                  <button onClick={() => setCopies(Math.max(1, copies - 1))} aria-label="Fewer copies" className="k-btn w-8 h-8"><Minus className="w-4 h-4" /></button>
+                  <span className="w-7 text-center text-sm font-bold" aria-live="polite">{copies}</span>
+                  <button onClick={() => setCopies(copies + 1)} aria-label="More copies" className="k-btn w-8 h-8"><Plus className="w-4 h-4" /></button>
+                </div>
               </div>
             </div>
-          </div>
+
+            <div className="k-card p-5 k-rise" style={{ ['--i' as string]: 4 }}>
+              <h3 className="text-sm font-semibold mb-3">Label size</h3>
+              <div className="space-y-2 max-h-48 overflow-y-auto pr-1">
+                {LABEL_SIZES.map((s) => {
+                  const on = size.id === s.id;
+                  return (
+                    <button key={s.id} onClick={() => setSize(s)} aria-pressed={on} className="w-full text-left px-3.5 py-2.5 rounded-2xl border transition-colors" style={{ borderColor: on ? 'var(--lime)' : 'var(--line)', background: on ? 'color-mix(in srgb, var(--lime) 12%, transparent)' : 'var(--card2)' }}>
+                      <span className="flex items-center justify-between"><span className="font-semibold text-sm">{s.name}</span>{s.popular && <span className="text-[11px] font-bold k-btn-lime rounded-full px-2 py-0.5">Popular</span>}</span>
+                      <span className="block text-xs k-muted mt-0.5">{s.description}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            <div className="k-card p-5 k-rise" style={{ ['--i' as string]: 5 }}>
+              <h3 className="text-sm font-semibold mb-2">Order details</h3>
+              <dl className="text-sm">
+                <Row label="Phone"><span className="font-mono">{activeOrder.customer.phone}</span></Row>
+                <Row label="City and PIN">{activeOrder.customer.city} ({activeOrder.customer.pinCode})</Row>
+                <Row label="Courier"><span className="font-semibold">{activeOrder.courier}</span></Row>
+                <Row label="Status"><span className="font-semibold">{activeOrder.status}</span></Row>
+                <Row label="Payment">
+                  <span className="font-bold">
+                    {activeOrder.paymentType === 'COD' ? `COD ₹${activeOrder.codAmount}` : 'Prepaid'}
+                    {(activeOrder.advancePaid || 0) > 0 && <span className="k-muted font-medium"> · advance ₹{activeOrder.advancePaid}</span>}
+                  </span>
+                </Row>
+              </dl>
+            </div>
+          </aside>
         </div>
-
       </div>
     </div>
   );

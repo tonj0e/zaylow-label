@@ -1,5 +1,6 @@
 import { supabase } from './supabase';
 import type { Order, OrderStatus } from '../types';
+import { buildRemarks } from '../utils/orderRemarks';
 
 const anySupabase = supabase as any;
 
@@ -51,6 +52,8 @@ export class DataService {
       // Parse quantity and IDs from remarks if available (format: "QTY:X CTN:Y PRD:Z")
       const remarks = row.remarks || '';
       const quantityMatch = remarks.match(/QTY:(\d+)/);
+      const advanceMatch = remarks.match(/ADV:(\d+)/);
+      const deliveredMatch = remarks.match(/DLV:(\d{4}-\d{2}-\d{2})/);
       const cartonMatch = remarks.match(/CTN:([^\s]+)/);
       const productMatch = remarks.match(/PRD:([^\s]+)/);
       const districtMatch = remarks.match(/DST:([^|]+)/);
@@ -81,6 +84,8 @@ export class DataService {
         },
         paymentType: row.payment_type as 'COD' | 'Prepaid',
         codAmount: row.cod_amount || 0,
+        advancePaid: advanceMatch ? parseInt(advanceMatch[1], 10) : 0,
+        deliveredAt: deliveredMatch ? deliveredMatch[1] : undefined,
         status: row.status as OrderStatus,
         courier: (row.courier as any) || 'Custom',
         trackingNumber: row.tracking_id || undefined,
@@ -155,6 +160,7 @@ export class DataService {
 
     // Prepare remarks with quantity, IDs, district and landmark for persistence
     let quantityRemark = `QTY:${order.item.quantity}`;
+    if (order.advancePaid && order.advancePaid > 0) quantityRemark += ` ADV:${Math.round(order.advancePaid)}`;
     if (order.cartonId) quantityRemark += ` CTN:${order.cartonId}`;
     if (order.productId) quantityRemark += ` PRD:${order.productId}`;
     if (order.customer.district) quantityRemark += ` DST:${order.customer.district}`;
@@ -263,9 +269,14 @@ export class DataService {
          // @ts-ignore
          const { data: existingOrder } = await anySupabase
            .from('orders')
-           .select('warranty_start, warranty_end')
+           .select('warranty_start, warranty_end, remarks')
            .eq('inventory_id', id)
            .single();
+
+         // remember the day it was delivered, so "delivered today" can be counted
+         if (existingOrder && !/DLV:\d{4}-\d{2}-\d{2}/.test(existingOrder.remarks || '')) {
+           updatePayload.remarks = `${existingOrder.remarks || ''} | DLV:${new Date().toISOString().slice(0, 10)}`.trim();
+         }
          
          if (existingOrder && existingOrder.warranty_start && existingOrder.warranty_end) {
             const start = new Date(existingOrder.warranty_start);
@@ -348,6 +359,56 @@ export class DataService {
    * @param trackingNumber The tracking number from the carrier
    * @param shippingLabelUrl Optional URL to the shipping label
    */
+  /**
+   * Edit the customer, address, courier and payment details of an order.
+   * The product, quantity, carton and stock reservation are left exactly as they were.
+   */
+  static async updateOrderDetails(id: string, d: {
+    name: string; phone: string; addressLine: string; landmark: string; city: string; district: string;
+    state: string; pinCode: string; courier: string; paymentType: 'COD' | 'Prepaid';
+    codAmount: number; advancePaid: number; notes: string; warrantyDays?: number;
+  }): Promise<boolean> {
+    const { data: rows, error: readError } = await anySupabase.from('orders').select('*').eq('inventory_id', id).limit(1);
+    if (readError || !rows || rows.length === 0) {
+      console.error('Could not read order before editing:', readError);
+      return false;
+    }
+    const row = rows[0];
+    const newRemarks = buildRemarks(row.remarks, { advancePaid: d.advancePaid, district: d.district, landmark: d.landmark, notes: d.notes });
+
+    const update: any = {
+      customer_name: d.name.trim(),
+      mobile: d.phone.trim(),
+      house_name: d.addressLine.trim(),
+      city: d.city.trim(),
+      state: d.state.trim(),
+      pincode: d.pinCode.trim(),
+      courier: d.courier,
+      payment_type: d.paymentType,
+      cod_amount: d.paymentType === 'COD' ? d.codAmount : 0,
+      remarks: newRemarks,
+    };
+    if ('area' in row) update.area = ''; // the address now lives in one field
+    if (d.warrantyDays !== undefined) {
+      if (d.warrantyDays > 0) {
+        // keep the original start day (it moves to the delivery day when the parcel is delivered)
+        const start = row.warranty_start ? new Date(row.warranty_start) : new Date();
+        update.warranty_start = start.toISOString();
+        update.warranty_end = new Date(start.getTime() + d.warrantyDays * 86_400_000).toISOString();
+      } else {
+        update.warranty_start = null;
+        update.warranty_end = null;
+      }
+    }
+
+    const { error } = await anySupabase.from('orders').update(update).eq('inventory_id', id);
+    if (error) {
+      console.error('Error updating order details:', error);
+      return false;
+    }
+    return true;
+  }
+
   static async updateTrackingInfo(id: string, trackingNumber: string, shippingLabelUrl: string | null = null): Promise<boolean> {
     // @ts-ignore
     const { error } = (await anySupabase
@@ -363,6 +424,84 @@ export class DataService {
       return false;
     }
     return true;
+  }
+
+  /**
+   * Save many tracking numbers at once (used by the India Post bookings import).
+   * Only the tracking number is written, so labels already stored stay as they are, and
+   * orders that were still Pending/Printed move to Shipped through the normal status path
+   * (which keeps stock in sync). Runs a few requests at a time.
+   */
+  static async applyTrackingBatch(
+    pairs: { id: string; awb: string; status: OrderStatus; next?: OrderStatus; setTracking?: boolean }[],
+    onProgress?: (done: number, total: number) => void,
+  ): Promise<{ saved: number; failed: string[] }> {
+    let saved = 0;
+    let done = 0;
+    const failed: string[] = [];
+    const toShip: OrderStatus[] = ['Pending', 'Processing', 'Label Generated', 'Printed'];
+    const CHUNK = 5;
+
+    for (let i = 0; i < pairs.length; i += CHUNK) {
+      await Promise.all(pairs.slice(i, i + CHUNK).map(async (p) => {
+        let ok = true;
+        if (p.setTracking !== false) {
+          const { error } = await anySupabase.from('orders').update({ tracking_id: p.awb }).eq('inventory_id', p.id);
+          if (error) { console.error('Could not save tracking number for', p.id, error); ok = false; }
+        }
+        if (ok) {
+          const next = p.next ?? (toShip.includes(p.status) ? 'Shipped' : p.status);
+          if (next !== p.status) ok = await this.setStatusQuiet(p.id, next);
+        }
+        if (ok) saved += 1; else failed.push(p.id);
+        done += 1;
+        onProgress?.(done, pairs.length);
+      }));
+    }
+    return { saved, failed };
+  }
+
+  /**
+   * Change an order's status from an imported India Post report. Unlike a manual "Delivered" click this does
+   * not stamp today's date as the delivery day, because the report does not say when it was delivered.
+   */
+  private static async setStatusQuiet(id: string, next: OrderStatus): Promise<boolean> {
+    if (next === 'Shipped') return this.updateOrderStatus(id, 'Shipped');
+    const { error } = await anySupabase.from('orders').update({ status: next }).eq('inventory_id', id);
+    if (error) { console.error('Could not change status for', id, error); return false; }
+    if (next === 'Delivered' || next === 'Returned') {
+      await anySupabase.from('inventory_items').update({ status: next, updated_at: new Date().toISOString() }).eq('order_id', id);
+    }
+    return true;
+  }
+
+  /**
+   * Ask the india-post-sync function to check every shipped parcel with India Post.
+   * `apply: false` only reports what would change.
+   */
+  static async checkIndiaPostDelivery(apply: boolean): Promise<{
+    ok: boolean;
+    error?: string;
+    checked?: number; delivered?: number; returned?: number; onTheWay?: number;
+    notScanned?: number; failed?: string[];
+    changes?: { order: string; tracking: string; to: 'Delivered' | 'Returned'; on?: string; status?: string }[];
+  }> {
+    try {
+      const { data, error } = await anySupabase.functions.invoke('india-post-sync', { body: { apply } });
+      if (error) {
+        // FunctionsHttpError carries the response; try to show the message the function wrote
+        let message = String(error.message || error);
+        try { const body = await error.context?.json?.(); if (body?.error) message = body.error; } catch { /* keep the default message */ }
+        if (/not found|404|Failed to send a request|fetch/i.test(message) && !/India Post/i.test(message)) {
+          message = 'The delivery check is not set up yet. It needs to be deployed once (see docs/india-post-setup.md).';
+        }
+        return { ok: false, error: message };
+      }
+      if (data?.error) return { ok: false, error: data.error };
+      return { ok: true, ...data };
+    } catch (e: any) {
+      return { ok: false, error: e?.message || 'The delivery check could not be reached.' };
+    }
   }
 
   static async deleteOrder(id: string): Promise<boolean> {
@@ -745,25 +884,10 @@ export class DataService {
 
   // --- INVENTORY AGGREGATION ---
   
-  static async getAggregatedStock(): Promise<any[]> {
-    const { data: products, error } = await fetchAllRows(() => anySupabase
-      .from('inventory_items')
-      .select('product_name, sku, status')
-      .order('id'));
-
-    if (error || !products) {
-      console.error('Error fetching products for aggregation:', error);
-      return [];
-    }
-
-    // Fetch returns to count them
-    const { data: returnsData, error: returnsError } = await fetchAllRows(() => anySupabase
-      .from('returns')
-      .select('product')
-      .order('id'));
-
+  /** Per-product stock totals from raw unit rows plus returns. */
+  private static buildStock(products: any[], returnsData: any[] | null): any[] {
     const summaryMap: Record<string, any> = {};
-    
+
     products.forEach((p: any) => {
       const rawName = (p.product_name || '').trim();
       if (!rawName) return;
@@ -773,68 +897,67 @@ export class DataService {
         summaryMap[lowerKey] = {
           id: rawName,
           product_name: rawName,
-          sku: p.sku ? p.sku.replace(/-?\d+$/, '').replace(/-$/, '') : rawName.substring(0,3).toUpperCase(),
+          sku: p.sku ? p.sku.replace(/-?\d+$/, '').replace(/-$/, '') : rawName.substring(0, 3).toUpperCase(),
           total_in: 0,
           available: 0,
           sold: 0,
-          returns: 0
+          returns: 0,
         };
       }
-      
+
       summaryMap[lowerKey].total_in += 1;
-      
-      if (p.status === 'In Stock') {
-        summaryMap[lowerKey].available += 1;
-      } else if (p.status === 'Reserved' || p.status === 'Shipped' || p.status === 'Delivered') {
-        summaryMap[lowerKey].sold += 1;
-      }
+      if (p.status === 'In Stock') summaryMap[lowerKey].available += 1;
+      else if (p.status === 'Reserved' || p.status === 'Shipped' || p.status === 'Delivered') summaryMap[lowerKey].sold += 1;
     });
 
-    if (!returnsError && returnsData) {
-      returnsData.forEach((r: any) => {
-        const rawName = (r.product || '').trim();
-        const lowerKey = rawName.toLowerCase();
-        if (summaryMap[lowerKey]) {
-          summaryMap[lowerKey].returns += 1;
-        }
-      });
-    }
+    (returnsData || []).forEach((r: any) => {
+      const lowerKey = (r.product || '').trim().toLowerCase();
+      if (summaryMap[lowerKey]) summaryMap[lowerKey].returns += 1;
+    });
 
     return Object.values(summaryMap).sort((a: any, b: any) => b.available - a.available);
   }
 
-  static async getCartonsWithProductCounts(): Promise<any[]> {
-    const { data: cartons, error: cartonsError } = await fetchAllRows(() => anySupabase
-      .from('cartons')
-      .select('*')
-      .order('created_at', { ascending: false })
-      .order('id', { ascending: false }));
-
-    if (cartonsError || !cartons) return [];
-
-    const { data: products, error: productsError } = await fetchAllRows(() => anySupabase
-      .from('inventory_items')
-      .select('carton_id, product_name, status')
-      .order('id'));
-
-    if (productsError || !products) return cartons.map((c: any) => ({ ...c, contents: [], totalUnits: 0 }));
+  /** Cartons with what is inside each, grouped in one pass over the unit rows. */
+  private static buildCartons(cartons: any[], products: any[]): any[] {
+    const byCarton = new Map<string, Map<string, number>>();
+    products.forEach((p: any) => {
+      if (!p.carton_id) return;
+      let m = byCarton.get(p.carton_id);
+      if (!m) { m = new Map(); byCarton.set(p.carton_id, m); }
+      m.set(p.product_name, (m.get(p.product_name) || 0) + 1);
+    });
 
     return cartons.map((carton: any) => {
-      const cartonProducts = products.filter((p: any) => p.carton_id === carton.id);
-      
-      const contentsMap: Record<string, number> = {};
-      cartonProducts.forEach((p: any) => {
-        contentsMap[p.product_name] = (contentsMap[p.product_name] || 0) + 1;
-      });
-
-      const contents = Object.entries(contentsMap).map(([name, count]) => ({ name, count }));
-      
-      return {
-        ...carton,
-        contents,
-        totalUnits: cartonProducts.length
-      };
+      const m = byCarton.get(carton.id);
+      const contents = m ? Array.from(m, ([name, count]) => ({ name, count })) : [];
+      return { ...carton, contents, totalUnits: contents.reduce((s, c) => s + c.count, 0) };
     });
+  }
+
+  /** Everything the inventory screens need, fetched once and in parallel. */
+  static async getInventoryOverview(): Promise<{ stock: any[]; cartons: any[] }> {
+    const [items, cartons, returns] = await Promise.all([
+      fetchAllRows(() => anySupabase.from('inventory_items').select('carton_id, product_name, sku, status').order('id')),
+      fetchAllRows(() => anySupabase.from('cartons').select('*').order('created_at', { ascending: false }).order('id', { ascending: false })),
+      fetchAllRows(() => anySupabase.from('returns').select('product').order('id')),
+    ]);
+    if (items.error || !items.data) {
+      console.error('Error fetching inventory overview:', items.error);
+      return { stock: [], cartons: (cartons.data || []).map((c: any) => ({ ...c, contents: [], totalUnits: 0 })) };
+    }
+    return {
+      stock: this.buildStock(items.data, returns.error ? null : returns.data),
+      cartons: cartons.data ? this.buildCartons(cartons.data, items.data) : [],
+    };
+  }
+
+  static async getAggregatedStock(): Promise<any[]> {
+    return (await this.getInventoryOverview()).stock;
+  }
+
+  static async getCartonsWithProductCounts(): Promise<any[]> {
+    return (await this.getInventoryOverview()).cartons;
   }
 
   static async getInventoryOutHistory(): Promise<any[]> {

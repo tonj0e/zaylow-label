@@ -87,6 +87,9 @@ export const ThermalLabel: React.FC<ThermalLabelProps> = ({
           <div className="mt-1 w-full px-4">
             <h2 className="font-black text-[16px] tracking-wide uppercase m-0 leading-none">COD: ₹{order.codAmount}</h2>
             <p className="text-[9px] font-bold mt-0.5">(Rupees {numberToWords(order.codAmount)} Only)</p>
+            {(order.advancePaid || 0) > 0 && (
+              <p className="text-[9px] font-bold mt-0.5">Advance paid: ₹{order.advancePaid} | Order total: ₹{order.codAmount + (order.advancePaid || 0)}</p>
+            )}
           </div>
         </div>
 

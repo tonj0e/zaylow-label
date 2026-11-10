@@ -16,6 +16,7 @@ import { StockSummary } from './components/warehouse/StockSummary';
 import { WarrantyView } from './components/warranty/WarrantyView';
 import { WarrantyCardView } from './components/warranty/WarrantyCardView';
 import { ClaimsView } from './components/claims/ClaimsView';
+import { TrackingView } from './components/tracking/TrackingView';
 import { InventoryAdd } from './components/inventory/InventoryAdd';
 import { InventoryList } from './components/inventory/InventoryList';
 import { InventorySearch } from './components/inventory/InventorySearch';
@@ -82,8 +83,19 @@ export function App() {
   const [isSidebarOpen, setIsSidebarOpen] = useState<boolean>(false);
 
   // Load and refresh orders from Supabase when needed
+  const lastOrderFetch = useRef(0);
+  const ordersRef = useRef<Order[]>([]);
+  useEffect(() => { ordersRef.current = orders; }, [orders]);
+  const orderSig = (list: Order[]) => list.map((o) => [
+    o.id, o.status, o.trackingNumber || '', o.codAmount, o.advancePaid || 0, o.courier, o.paymentType,
+    o.customer.name, o.customer.phone, o.customer.addressLine, o.customer.landmark || '', o.customer.city,
+    o.customer.district, o.customer.state, o.customer.pinCode, o.notes || '',
+  ].join('|')).join(';');
   const fetchOrders = async () => {
+    lastOrderFetch.current = Date.now();
     const loadedOrders = await DataService.getOrders();
+    // Only touch state when something actually changed, so pages don't re-render for nothing
+    if (orderSig(loadedOrders) === orderSig(ordersRef.current)) return;
     setOrders(loadedOrders);
   };
 
@@ -92,8 +104,9 @@ export function App() {
   }, []);
 
   // Refresh orders whenever the user navigates back to orders or dashboard
+  // (throttled: clicking between pages must not re-download every order each time)
   useEffect(() => {
-    if (activeTab === 'orders' || activeTab === 'dashboard') {
+    if ((activeTab === 'orders' || activeTab === 'dashboard') && Date.now() - lastOrderFetch.current > 20000) {
       fetchOrders();
     }
   }, [activeTab]);
@@ -226,6 +239,18 @@ export function App() {
     }
   };
 
+  const handleEditOrder = async (id: string, changes: Parameters<typeof DataService.updateOrderDetails>[1]) => {
+    const ok = await DataService.updateOrderDetails(id, changes);
+    if (ok) setOrders(await DataService.getOrders());
+    return ok;
+  };
+
+  const handleApplyTrackingBatch = async (pairs: { id: string; awb: string; status: OrderStatus; next?: OrderStatus; setTracking?: boolean }[], onProgress?: (done: number, total: number) => void) => {
+    const result = await DataService.applyTrackingBatch(pairs, onProgress);
+    setOrders(await DataService.getOrders());
+    return result;
+  };
+
   const handleDeleteOrder = async (id: string) => {
     const success = await DataService.deleteOrder(id);
     if (success) {
@@ -309,7 +334,7 @@ export function App() {
   const pendingCount = orders.filter(o => o.status === 'Pending').length;
 
   return (
-    <div className={`min-h-screen flex bg-slate-50 dark:bg-slate-950 text-black dark:text-white font-sans ${darkMode ? 'dark' : ''}`}>
+    <div className={`kdash min-h-screen flex text-black dark:text-white ${darkMode ? 'dark' : ''}`}>
       {/* Sidebar Navigation */}
       <Sidebar
         activeTab={activeTab}
@@ -350,6 +375,8 @@ export function App() {
                 navigateTo('generator');
               }}
               onNavigateToBulk={() => navigateTo('bulk')}
+              onUpdateStatus={handleUpdateStatus}
+              onUpdateTracking={handleUpdateTracking}
             />
           )}
 
@@ -385,6 +412,7 @@ export function App() {
               onDeleteOrder={handleDeleteOrder}
               onUpdateStatus={handleUpdateStatus}
               onUpdateTracking={handleUpdateTracking}
+              onEditOrder={handleEditOrder}
               onNavigateToWarrantyCard={(order: Order) => {
                 setSelectedOrderForWarrantyCard(order);
                 navigateTo('warranty-cards');
@@ -396,6 +424,17 @@ export function App() {
             <BulkImportView
               settings={settings}
               onImportComplete={handleBulkImportComplete}
+            />
+          )}
+
+          {activeTab === 'tracking' && (
+            <TrackingView
+              orders={orders}
+              settings={settings}
+              onUpdateStatus={handleUpdateStatus}
+              onUpdateTracking={handleUpdateTracking}
+              onApplyTrackingBatch={handleApplyTrackingBatch}
+              onRefreshOrders={async () => { setOrders(await DataService.getOrders()); }}
             />
           )}
 

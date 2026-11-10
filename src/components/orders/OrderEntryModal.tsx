@@ -40,6 +40,7 @@ export const OrderEntryModal: React.FC<OrderEntryModalProps> = ({
   const [courier, setCourier] = useState<CourierName>('India Post');
   const [paymentType, setPaymentType] = useState<PaymentType>('COD');
   const [codAmount, setCodAmount] = useState<number | ''>('');
+  const [advancePaid, setAdvancePaid] = useState<number | ''>(100);
   const [warrantyType, setWarrantyType] = useState<string>('0');
   const [customWarrantyDays, setCustomWarrantyDays] = useState<number | ''>('');
 
@@ -73,6 +74,7 @@ export const OrderEntryModal: React.FC<OrderEntryModalProps> = ({
       setCourier('India Post');
       setPaymentType('COD');
       setCodAmount('');
+      setAdvancePaid(100);
       setWarrantyType('0');
       setCustomWarrantyDays('');
       setProductError(null);
@@ -106,6 +108,7 @@ export const OrderEntryModal: React.FC<OrderEntryModalProps> = ({
     courier,
     paymentType,
     codAmount: paymentType === 'COD' ? (codAmount === '' ? 0 : codAmount) : 0,
+    advancePaid: advancePaid === '' ? 0 : advancePaid,
     status: 'Pending',
     createdAt: new Date().toISOString(),
     date: new Date().toISOString(),
@@ -155,6 +158,7 @@ export const OrderEntryModal: React.FC<OrderEntryModalProps> = ({
       courier,
       paymentType,
       codAmount: paymentType === 'COD' ? (codAmount === '' ? 0 : codAmount) : 0,
+      advancePaid: advancePaid === '' ? 0 : advancePaid,
       status: 'Pending',
       createdAt: new Date().toISOString(),
       date: new Date().toISOString(),
@@ -531,7 +535,7 @@ export const OrderEntryModal: React.FC<OrderEntryModalProps> = ({
               {paymentType === 'COD' && (
                 <div>
                   <label className="text-[11px] font-bold text-amber-400 uppercase tracking-wider block mb-1">
-                    COD Amount (₹)
+                    COD Amount to collect (₹)
                   </label>
                   <input
                     type="number"
@@ -541,6 +545,22 @@ export const OrderEntryModal: React.FC<OrderEntryModalProps> = ({
                   />
                 </div>
               )}
+
+              <div>
+                <label className="text-[11px] font-bold text-emerald-500 uppercase tracking-wider block mb-1">
+                  {paymentType === 'COD' ? 'Advance paid (₹)' : 'Amount paid (₹)'}
+                </label>
+                <input
+                  type="number"
+                  min={0}
+                  value={advancePaid}
+                  onChange={(e) => setAdvancePaid(e.target.value === '' ? '' : Math.max(0, parseInt(e.target.value)))}
+                  className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-emerald-500/50 rounded-lg text-emerald-500 font-mono font-bold text-xs focus:outline-none focus:border-emerald-400"
+                />
+                <p className="text-[10px] text-slate-500 mt-1">
+                  Order total: ₹{((paymentType === 'COD' ? (codAmount === '' ? 0 : codAmount) : 0) + (advancePaid === '' ? 0 : advancePaid)).toLocaleString('en-IN')}
+                </p>
+              </div>
 
               <div>
                 <label className="text-[11px] font-bold text-blue-500 uppercase tracking-wider block mb-1">

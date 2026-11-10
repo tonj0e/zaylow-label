@@ -38,6 +38,10 @@ export interface Order {
   courier: CourierName;
   paymentType: PaymentType;
   codAmount: number;
+  /** Rupees the customer paid upfront (advance for COD, full amount for Prepaid). Stored as ADV:n in remarks. */
+  advancePaid?: number;
+  /** Day India Post delivered it (YYYY-MM-DD), stored as DLV:date in remarks. */
+  deliveredAt?: string;
   status: OrderStatus;
   createdAt: string;
   cartonId?: string;

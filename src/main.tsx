@@ -2,6 +2,7 @@ import { StrictMode, Component } from 'react'
 import type { ErrorInfo, ReactNode } from 'react'
 import { createRoot } from 'react-dom/client'
 import './index.css'
+import './styles/kdash.css'
 import { App } from './App.tsx'
 
 /**

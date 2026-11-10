@@ -1,17 +1,10 @@
-import { useState, useEffect } from 'react';
+import { useCached } from '../../hooks/useCached';
 import { BarChart3, TrendingUp, AlertCircle, Loader2 } from 'lucide-react';
 import { DataService } from '../../services/dataService';
 
 export const StockSummary = () => {
-  const [stock, setStock] = useState<any[]>([]);
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    DataService.getAggregatedStock().then(data => {
-      if (data) setStock(data);
-      setLoading(false);
-    });
-  }, []);
+  const { data: overview, loading } = useCached('inventory-overview', () => DataService.getInventoryOverview());
+  const stock: any[] = overview?.stock ?? [];
 
   const totalAvailable = stock.reduce((sum, item) => sum + (item.available || 0), 0);
   const lowStockAlerts = stock.filter(item => (item.available || 0) <= 20).length;

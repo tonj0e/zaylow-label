@@ -1,23 +1,12 @@
-import React, { useState, useMemo, useRef, useCallback, useEffect } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import type { Order, OrderStatus, CompanySettings } from '../../types';
-import { ThermalLabel } from '../label/ThermalLabel';
-import html2canvas from 'html2canvas';
-import {
-  Printer,
-  FileDown,
-  Trash2,
-  SlidersHorizontal,
-  ChevronLeft,
-  ChevronRight,
-  Plus,
-  Download,
-  Award,
-  QrCode,
-  CheckCircle2,
-  X
-} from 'lucide-react';
+import { Printer, FileDown, Trash2, ChevronLeft, ChevronRight, Download, Award, ScanLine, CheckCircle2, X, ListPlus, Pencil, CalendarDays, PackageCheck, Truck } from 'lucide-react';
 import { TrackingModal } from './TrackingModal';
 import { TrackingScannerModal } from './TrackingScannerModal';
+import { OrderEditModal } from './OrderEditModal';
+import type { OrderChanges } from './OrderEditModal';
+import { useLabelDownload } from '../../hooks/useLabelDownload';
+import { STATUS_DOT, STATUS_ORDER } from './orderUi';
 
 interface OrdersViewProps {
   orders: Order[];
@@ -33,673 +22,361 @@ interface OrdersViewProps {
   onDeleteOrder: (id: string) => void;
   onUpdateStatus: (id: string, status: OrderStatus) => void;
   onUpdateTracking: (id: string, trackingNumber: string, shippingLabelUrl: string | null) => void;
+  onEditOrder: (id: string, changes: OrderChanges) => Promise<boolean>;
   onNavigateToWarrantyCard?: (order: Order) => void;
 }
 
+const PAGE = 15;
+// shared column template so the header lines up with every row on wide screens
+const COLS = 'lg:grid-cols-[1.75rem_8.5rem_minmax(0,1.15fr)_minmax(0,1fr)_minmax(0,1.15fr)_7rem_9.5rem_16.5rem]';
+
+const IconBtn: React.FC<{ label: string; onClick: () => void; disabled?: boolean; danger?: boolean; children: React.ReactNode }> = ({ label, onClick, disabled, danger, children }) => (
+  <button
+    onClick={onClick}
+    disabled={disabled}
+    aria-label={label}
+    title={label}
+    className="w-9 h-9 rounded-full flex items-center justify-center k-btn-soft disabled:opacity-40"
+    style={danger ? { color: 'var(--bad)' } : undefined}
+  >
+    {children}
+  </button>
+);
+
 export const OrdersView: React.FC<OrdersViewProps> = ({
-  orders,
-  settings,
-  searchQuery,
-  statusFilter,
-  setStatusFilter: _setStatusFilter,
-  onOpenOrderModal,
-  onNavigateToGenerator,
-  onPrintBulkOrders: _onPrintBulkOrders,
-  onAddToQueue,
-  onDownloadBulkPDF,
-  onDeleteOrder,
-  onUpdateStatus,
-  onUpdateTracking,
-  onNavigateToWarrantyCard
+  orders, settings, searchQuery, statusFilter, setStatusFilter, onOpenOrderModal: _onOpenOrderModal, onNavigateToGenerator,
+  onAddToQueue, onDownloadBulkPDF, onDeleteOrder, onUpdateStatus, onUpdateTracking, onEditOrder, onNavigateToWarrantyCard,
 }) => {
-  const [downloadingId, setDownloadingId] = useState<string | null>(null);
-  const [downloadModalOrder, setDownloadModalOrder] = useState<Order | null>(null);
+  const { download, downloadingId, overlay } = useLabelDownload(settings);
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
   const [trackingOrder, setTrackingOrder] = useState<Order | null>(null);
-  const [isTrackingScannerOpen, setIsTrackingScannerOpen] = useState(false);
-  const [shippedToast, setShippedToast] = useState<{ orderId: string; customerName: string; trackingNumber: string } | null>(null);
-  const downloadLabelRef = useRef<HTMLDivElement>(null);
+  const [scannerOpen, setScannerOpen] = useState(false);
+  const [editOrder, setEditOrder] = useState<Order | null>(null);
+  const [editedId, setEditedId] = useState<string | null>(null);
+  const [toast, setToast] = useState<{ orderId: string; customerName: string; trackingNumber: string } | null>(null);
+  const [courierFilter, setCourierFilter] = useState('ALL');
+  const [paymentFilter, setPaymentFilter] = useState('ALL');
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [page, setPage] = useState(1);
 
   useEffect(() => {
-    if (!shippedToast) return;
-    const timer = setTimeout(() => {
-      setShippedToast(null);
-    }, 4500);
-    return () => clearTimeout(timer);
-  }, [shippedToast]);
+    if (!editedId) return;
+    const t = setTimeout(() => setEditedId(null), 3500);
+    return () => clearTimeout(t);
+  }, [editedId]);
 
-  const handleDownloadLabel = useCallback(async (order: Order) => {
-    // Show the modal overlay with the label
-    setDownloadingId(order.id);
-    setDownloadModalOrder(order);
-    // Wait for modal + label to fully render with styles
-    await new Promise(r => setTimeout(r, 300));
-    if (downloadLabelRef.current) {
-      try {
-        const canvas = await html2canvas(downloadLabelRef.current, {
-          scale: 3,
-          useCORS: true,
-          backgroundColor: '#ffffff',
-          logging: false
-        });
-        const link = document.createElement('a');
-        link.download = `ZAYLOW-Label-${order.id}.png`;
-        link.href = canvas.toDataURL('image/png');
-        link.click();
-      } catch (e) {
-        console.error('Download failed', e);
-      }
-    }
-    setDownloadModalOrder(null);
-    setDownloadingId(null);
-  }, []);
-  // Filtering & Pagination State
-  const [courierFilter, setCourierFilter] = useState<string>('ALL');
-  const [paymentFilter, setPaymentFilter] = useState<string>('ALL');
-  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
-  const [currentPage, setCurrentPage] = useState<number>(1);
-  const pageSize = 15;
+  useEffect(() => {
+    if (!toast) return;
+    const t = setTimeout(() => setToast(null), 4500);
+    return () => clearTimeout(t);
+  }, [toast]);
 
-  // Filter orders
-  const filteredOrders = useMemo(() => {
-    return orders.filter(o => {
-      // Search text match
-      const q = searchQuery.toLowerCase().trim();
-      const matchQuery =
-        !q ||
-        o.id.toLowerCase().includes(q) ||
-        o.customer.name.toLowerCase().includes(q) ||
-        o.customer.phone.includes(q) ||
-        o.customer.pinCode.includes(q) ||
-        o.courier.toLowerCase().includes(q) ||
-        o.customer.city.toLowerCase().includes(q) ||
+  // back to page 1 whenever the search or status filter changes from outside
+  useEffect(() => { setPage(1); }, [searchQuery, statusFilter]);
+
+  const counts = useMemo(() => {
+    const c: Record<string, number> = {};
+    orders.forEach((o) => { c[o.status] = (c[o.status] || 0) + 1; });
+    return c;
+  }, [orders]);
+
+  const stats = useMemo(() => {
+    const start = new Date(); start.setHours(0, 0, 0, 0);
+    const t = start.getTime();
+    const live = orders.filter((o) => o.status !== 'Cancelled');
+    const day = 86_400_000;
+    const week = Array.from({ length: 7 }, (_, i) => {
+      const from = t - (6 - i) * day;
+      const d = new Date(from);
+      return { label: d.toLocaleDateString('en-IN', { weekday: 'short' }), n: live.filter((o) => { const c = new Date(o.createdAt).getTime(); return c >= from && c < from + day; }).length };
+    });
+    const shipped = orders.filter((o) => o.status === 'Shipped');
+    const ready = counts['Printed'] || 0;
+    const printedOrBeyond = ready + (counts['Shipped'] || 0) + (counts['Delivered'] || 0);
+    return {
+      today: week[6].n,
+      week,
+      toPrint: (counts['Pending'] || 0) + (counts['Processing'] || 0) + (counts['Label Generated'] || 0),
+      ready,
+      printedShare: live.length ? Math.round((printedOrBeyond / live.length) * 100) : 0,
+      shippedCount: shipped.length,
+      shipShare: ready + shipped.length ? Math.round((shipped.length / (ready + shipped.length)) * 100) : 0,
+      shippedCod: shipped.filter((o) => o.paymentType === 'COD').length,
+      codOnRoad: shipped.filter((o) => o.paymentType === 'COD').reduce((n, o) => n + o.codAmount, 0),
+    };
+  }, [orders, counts]);
+
+  const filtered = useMemo(() => {
+    const q = searchQuery.toLowerCase().trim();
+    return orders.filter((o) => {
+      const matchQuery = !q ||
+        o.id.toLowerCase().includes(q) || o.customer.name.toLowerCase().includes(q) || o.customer.phone.includes(q) ||
+        o.customer.pinCode.includes(q) || o.courier.toLowerCase().includes(q) || o.customer.city.toLowerCase().includes(q) ||
         o.item.productName.toLowerCase().includes(q);
-
-      // Status filter match
-      const matchStatus = statusFilter === 'ALL' || o.status === statusFilter;
-      // Courier filter match
-      const matchCourier = courierFilter === 'ALL' || o.courier === courierFilter;
-      // Payment filter match
-      const matchPayment = paymentFilter === 'ALL' || o.paymentType === paymentFilter;
-
-      return matchQuery && matchStatus && matchCourier && matchPayment;
+      return matchQuery &&
+        (statusFilter === 'ALL' || o.status === statusFilter) &&
+        (courierFilter === 'ALL' || o.courier === courierFilter) &&
+        (paymentFilter === 'ALL' || o.paymentType === paymentFilter);
     });
   }, [orders, searchQuery, statusFilter, courierFilter, paymentFilter]);
 
-  // Pagination calculation
-  const totalPages = Math.ceil(filteredOrders.length / pageSize) || 1;
-  const paginatedOrders = useMemo(() => {
-    const start = (currentPage - 1) * pageSize;
-    return filteredOrders.slice(start, start + pageSize);
-  }, [filteredOrders, currentPage, pageSize]);
+  const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE));
+  const current = Math.min(page, totalPages);
+  const rows = useMemo(() => filtered.slice((current - 1) * PAGE, current * PAGE), [filtered, current]);
 
-  // Selection Handlers
-  const toggleSelectAll = () => {
-    if (selectedIds.size === paginatedOrders.length) {
-      setSelectedIds(new Set());
-    } else {
-      setSelectedIds(new Set(paginatedOrders.map(o => o.id)));
-    }
+  const allOnPage = rows.length > 0 && rows.every((o) => selected.has(o.id));
+  const toggleAll = () => setSelected((s) => { const n = new Set(s); rows.forEach((o) => (allOnPage ? n.delete(o.id) : n.add(o.id))); return n; });
+  const toggle = (id: string) => setSelected((s) => { const n = new Set(s); if (n.has(id)) n.delete(id); else n.add(id); return n; });
+  const selectedList = useMemo(() => orders.filter((o) => selected.has(o.id)), [orders, selected]);
+
+  const changeStatus = (order: Order, status: OrderStatus) => {
+    if (status === 'Shipped') { setTrackingOrder(order); return; }
+    onUpdateStatus(order.id, status);
   };
 
-  const toggleSelect = (id: string) => {
-    const next = new Set(selectedIds);
-    if (next.has(id)) {
-      next.delete(id);
-    } else {
-      next.add(id);
-    }
-    setSelectedIds(next);
-  };
-
-  const selectedOrdersList = useMemo(() => {
-    return orders.filter(o => selectedIds.has(o.id));
-  }, [orders, selectedIds]);
-
-  const handlePrintSelected = () => {
-    if (selectedOrdersList.length > 0) {
-      onAddToQueue(selectedOrdersList);
-    }
-  };
-
-  const handlePrintAllFiltered = () => {
-    if (filteredOrders.length > 0) {
-      onAddToQueue(filteredOrders);
-    }
-  };
-
-  const handleDownloadSelectedPDF = () => {
-    if (selectedOrdersList.length > 0) {
-      onDownloadBulkPDF(selectedOrdersList);
-    }
-  };
+  const filtersActive = courierFilter !== 'ALL' || paymentFilter !== 'ALL';
+  const pills: [string, string, number][] = [['ALL', 'All', orders.length], ...STATUS_ORDER.filter((s) => (counts[s] || 0) > 0 || s === statusFilter).map((s) => [s, s, counts[s] || 0] as [string, string, number])];
 
   return (
-    <div className="p-4 md:p-6 space-y-4 md:space-y-6 select-none pb-24 md:pb-6">
-      {/* Top Header & Actions */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-        <div>
-          <h2 className="text-2xl font-black text-black dark:text-white tracking-tight">Order Management</h2>
-          <p className="text-xs text-black dark:text-white mt-1">
-            Showing <strong className="text-emerald-400">{filteredOrders.length}</strong> of {orders.length} orders
-          </p>
-        </div>
-
-        <div className="flex flex-wrap items-center gap-3">
-          {selectedIds.size > 0 ? (
-            <>
-              <button
-                onClick={handlePrintSelected}
-                className="px-4 py-2 rounded-xl bg-emerald-500 text-slate-950 text-xs font-black shadow-lg shadow-emerald-500/20 hover:bg-emerald-400 transition flex items-center gap-2"
-              >
-                <Printer className="w-4 h-4" />
-                <span>Add Selected to Queue ({selectedIds.size})</span>
-              </button>
-
-              <button
-                onClick={handleDownloadSelectedPDF}
-                className="px-4 py-2 rounded-xl bg-slate-100 dark:bg-slate-800 text-black dark:text-white text-xs font-bold border border-slate-300 dark:border-slate-700 hover:bg-slate-200 dark:bg-slate-700 transition flex items-center gap-2"
-              >
-                <FileDown className="w-4 h-4 text-emerald-400" />
-                <span>Download PDF ({selectedIds.size})</span>
-              </button>
-            </>
-          ) : (
-            <button
-              onClick={handlePrintAllFiltered}
-              className="px-4 py-2 rounded-xl bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 text-xs font-bold hover:bg-emerald-500 hover:text-slate-950 transition flex items-center gap-2"
-            >
-              <Printer className="w-4 h-4" />
-              <span>Add All to Queue ({filteredOrders.length})</span>
-            </button>
-          )}
-
-          <button
-            onClick={() => setIsTrackingScannerOpen(true)}
-            className="px-4 py-2 rounded-xl bg-blue-600 text-white text-xs font-black hover:bg-blue-500 shadow-lg shadow-blue-500/20 transition flex items-center gap-2"
-            title="Scan India Post tracking QR code/barcode to automatically mark as Shipped"
-          >
-            <QrCode className="w-4 h-4" />
-            <span>Scan Tracking</span>
-          </button>
-
-          <button
-            onClick={onOpenOrderModal}
-            className="px-4 py-2 rounded-xl bg-emerald-500 text-slate-950 text-xs font-black hover:bg-emerald-400 shadow-lg shadow-emerald-500/20 transition flex items-center gap-2"
-          >
-            <Plus className="w-4 h-4 stroke-[3]" />
-            <span>Create Single Order</span>
-          </button>
-        </div>
-      </div>
-
-      {/* Filters */}
-      <div className="space-y-4">
-        {/* Courier & Payment Filters */}
-        <div className="p-3 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 flex flex-wrap items-center gap-4 text-xs">
-          <div className="flex items-center gap-2 text-black dark:text-white font-bold uppercase tracking-wider text-[10px]">
-            <SlidersHorizontal className="w-3.5 h-3.5 text-emerald-400" />
-            <span>Filters:</span>
-          </div>
-
-          <select
-            value={courierFilter}
-            onChange={(e) => {
-              setCourierFilter(e.target.value);
-              setCurrentPage(1);
-            }}
-            className="px-3 py-1.5 rounded-lg bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 text-black dark:text-white font-semibold focus:outline-none focus:border-emerald-500"
-          >
-            <option value="ALL">All Couriers</option>
-            <option value="Delhivery">Delhivery</option>
-            <option value="DTDC">DTDC</option>
-            <option value="India Post">India Post</option>
-            <option value="Shiprocket">Shiprocket</option>
-            <option value="NimbusPost">NimbusPost</option>
-            <option value="Bluedart">Bluedart</option>
-            <option value="Ekart">Ekart</option>
-          </select>
-
-          <select
-            value={paymentFilter}
-            onChange={(e) => {
-              setPaymentFilter(e.target.value);
-              setCurrentPage(1);
-            }}
-            className="px-3 py-1.5 rounded-lg bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 text-black dark:text-white font-semibold focus:outline-none focus:border-emerald-500"
-          >
-            <option value="ALL">All Payment Types</option>
-            <option value="COD">COD Only</option>
-            <option value="Prepaid">Prepaid Only</option>
-          </select>
-
-          {(courierFilter !== 'ALL' || paymentFilter !== 'ALL') && (
-            <button
-              onClick={() => {
-                setCourierFilter('ALL');
-                setPaymentFilter('ALL');
-                setCurrentPage(1);
-              }}
-              className="text-emerald-400 underline font-semibold text-[11px] ml-auto"
-            >
-              Clear
-            </button>
-          )}
-        </div>
-      </div>
-
-      {/* Orders List (Table on Desktop, Cards on Mobile) */}
-      <div className="rounded-2xl bg-white dark:bg-slate-900 border border-slate-200/70 dark:border-slate-800/70 shadow-sm overflow-hidden">
-        
-        {/* Mobile View: Cards */}
-        <div className="md:hidden flex flex-col divide-y divide-slate-100 dark:divide-slate-800/60">
-          {paginatedOrders.length === 0 ? (
-            <div className="p-12 text-center text-slate-400 dark:text-slate-500 text-sm">
-              No orders match the selected search & filter criteria.
-            </div>
-          ) : (
-            paginatedOrders.map((order) => {
-              const isSelected = selectedIds.has(order.id);
-              return (
-                <div 
-                  key={order.id} 
-                  className={`p-4 transition-colors ${isSelected ? 'bg-emerald-500/10' : 'active:bg-slate-50 dark:active:bg-slate-800/40'}`}
-                >
-                  {/* Card Header: Checkbox + ID + Status */}
-                  <div className="flex items-center justify-between mb-3">
-                    <div className="flex items-center gap-3">
-                      <input
-                        type="checkbox"
-                        checked={isSelected}
-                        onChange={() => toggleSelect(order.id)}
-                        className="w-4.5 h-4.5 rounded border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-900 text-emerald-500 focus:ring-emerald-500"
-                      />
-                      <div>
-                        <span className="font-mono font-black text-emerald-600 dark:text-emerald-400 text-sm tracking-tight">{order.id}</span>
-                        <span className="block text-[10px] font-medium text-slate-500 dark:text-slate-400 mt-0.5">{new Date(order.createdAt).toLocaleDateString()}</span>
-                      </div>
-                    </div>
-                    <select
-                      value={order.status}
-                      onChange={(e) => {
-                        const newStatus = e.target.value as OrderStatus;
-                        if (newStatus === 'Shipped') {
-                          setTrackingOrder(order);
-                          return;
-                        }
-                        onUpdateStatus(order.id, newStatus);
-                      }}
-                      className={`px-2 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-wider bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 ${
-                        order.status === 'Printed' ? 'text-emerald-500 border-emerald-500/30'
-                        : order.status === 'Shipped' ? 'text-blue-500 border-blue-500/30'
-                        : order.status === 'Delivered' ? 'text-teal-500 border-teal-500/30'
-                        : order.status === 'Cancelled' ? 'text-red-500 border-red-500/30'
-                        : order.status === 'Returned' ? 'text-rose-500 border-rose-500/30'
-                        : order.status === 'Claims' ? 'text-purple-500 border-purple-500/30'
-                        : order.status === 'Processing' || order.status === 'Label Generated' ? 'text-indigo-500 border-indigo-500/30'
-                        : 'text-amber-500 border-amber-500/30'
-                      }`}
-                    >
-                      <option value="Pending">Pending</option>
-                      <option value="Processing">Processing</option>
-                      <option value="Label Generated">Label Generated</option>
-                      <option value="Printed">Printed</option>
-                      <option value="Shipped">Shipped</option>
-                      <option value="Delivered">Delivered</option>
-                      <option value="Cancelled">Cancelled</option>
-                      <option value="Claims">Claims</option>
-                      <option value="Returned">Returned</option>
-                    </select>
-                  </div>
-
-                  {/* Card Body */}
-                  <div className="grid grid-cols-2 gap-3 mb-3 text-xs">
-                    <div>
-                      <span className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-0.5">Customer</span>
-                      <span className="font-bold text-black dark:text-white block truncate">{order.customer.name}</span>
-                      <span className="font-mono text-[11px] text-slate-600 dark:text-slate-400 block">{order.customer.phone}</span>
-                    </div>
-                    <div>
-                      <span className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-0.5">Location</span>
-                      <span className="font-bold text-black dark:text-white block truncate">{order.customer.city}</span>
-                      <span className="font-mono text-[11px] text-emerald-600 dark:text-emerald-400 block">{order.customer.pinCode}</span>
-                    </div>
-                  </div>
-
-                  <div className="bg-slate-50 dark:bg-slate-950 rounded-xl p-3 mb-3 border border-slate-100 dark:border-slate-800/60">
-                    <div className="flex justify-between items-start mb-2 pb-2 border-b border-slate-200 dark:border-slate-800/60">
-                      <div className="flex-1 pr-2">
-                        <span className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-0.5">Product</span>
-                        <span className="font-bold text-black dark:text-white leading-tight block line-clamp-1">{order.item.productName}</span>
-                      </div>
-                      <div className="text-right">
-                        <span className="inline-block px-1.5 py-0.5 bg-black dark:bg-white text-white dark:text-black font-black text-[10px] rounded">
-                          x{order.item.quantity}
-                        </span>
-                      </div>
-                    </div>
-                    <div className="flex justify-between items-center text-xs">
-                      <div className="flex items-center gap-1.5">
-                        <span className="px-2 py-0.5 rounded-md bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-slate-700 font-bold text-[10px]">
-                          {order.courier}
-                        </span>
-                      </div>
-                      <div className="text-right">
-                        <span className={`font-black ${order.paymentType === 'COD' ? 'text-amber-500' : 'text-emerald-500'}`}>
-                          {order.paymentType} {order.paymentType === 'COD' && `(₹${order.codAmount})`}
-                        </span>
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Card Actions */}
-                  <div className="flex items-center justify-end gap-2 pt-1">
-                    <button
-                      onClick={() => handleDownloadLabel(order)}
-                      disabled={downloadingId === order.id}
-                      className="flex-1 py-2 rounded-xl bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 font-bold active:bg-slate-200 dark:active:bg-slate-700 transition text-xs flex items-center justify-center gap-1.5 disabled:opacity-40"
-                    >
-                      <Download className="w-3.5 h-3.5" />
-                      <span>{downloadingId === order.id ? '...' : 'PNG'}</span>
-                    </button>
-                    <button
-                      onClick={() => onNavigateToGenerator(order)}
-                      className="flex-1 py-2 rounded-xl bg-emerald-500 text-slate-950 font-black active:bg-emerald-400 transition text-xs"
-                    >
-                      Print Label
-                    </button>
-                    {onNavigateToWarrantyCard && (
-                      <button
-                        onClick={() => onNavigateToWarrantyCard(order)}
-                        className="p-2 rounded-xl bg-pink-500/10 text-[#E11D48] dark:text-pink-400 font-bold active:bg-pink-500/20 transition flex items-center justify-center border border-pink-500/20"
-                        title="Print 1-Year Warranty Card"
-                      >
-                        <Award className="w-4 h-4" />
-                      </button>
-                    )}
-                    <button
-                      onClick={() => setDeleteConfirmId(order.id)}
-                      className="p-2 rounded-xl bg-red-50 dark:bg-red-500/10 text-red-600 dark:text-red-400 active:bg-red-100 dark:active:bg-red-500/20 transition flex items-center justify-center"
-                    >
-                      <Trash2 className="w-4 h-4" />
-                    </button>
-                  </div>
-                </div>
-              );
-            })
-          )}
-        </div>
-
-        {/* Desktop View: Table */}
-        <div className="hidden md:block overflow-x-auto">
-          <table className="w-full text-left text-xs text-black dark:text-white">
-            <thead className="bg-slate-50 dark:bg-slate-950 text-black dark:text-white font-bold uppercase text-[10px] border-b border-slate-200 dark:border-slate-800">
-              <tr>
-                <th className="p-3.5 w-10 text-center">
-                  <input
-                    type="checkbox"
-                    checked={paginatedOrders.length > 0 && selectedIds.size === paginatedOrders.length}
-                    onChange={toggleSelectAll}
-                    className="w-4 h-4 rounded border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-emerald-500 focus:ring-0"
-                  />
-                </th>
-                <th className="p-3.5">Order ID</th>
-                <th className="p-3.5">Customer & Contact</th>
-                <th className="p-3.5">Address & PIN</th>
-                <th className="p-3.5">Product & SKU</th>
-                <th className="p-3.5">Courier</th>
-                <th className="p-3.5">Payment</th>
-                <th className="p-3.5">Status</th>
-                <th className="p-3.5 text-right">Actions</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-800/60 font-medium">
-              {paginatedOrders.length === 0 ? (
-                <tr>
-                  <td colSpan={9} className="p-12 text-center text-slate-400 dark:text-slate-500">
-                    No orders match the selected search & filter criteria.
-                  </td>
-                </tr>
-              ) : (
-                paginatedOrders.map((order) => {
-                  const isSelected = selectedIds.has(order.id);
-                  return (
-                    <tr
-                      key={order.id}
-                      className={`hover:bg-slate-100 dark:bg-slate-800/40 transition ${
-                        isSelected ? 'bg-emerald-500/10' : ''
-                      }`}
-                    >
-                      <td className="p-3.5 text-center">
-                        <input
-                          type="checkbox"
-                          checked={isSelected}
-                          onChange={() => toggleSelect(order.id)}
-                          className="w-4 h-4 rounded border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-emerald-500 focus:ring-0"
-                        />
-                      </td>
-
-                      <td className="p-3.5 font-mono font-black text-emerald-400">
-                        {order.id}
-                        <span className="block text-[9px] font-sans font-semibold text-slate-400 dark:text-slate-500">
-                          {new Date(order.createdAt).toLocaleDateString()}
-                        </span>
-                      </td>
-
-                      <td className="p-3.5">
-                        <span className="font-bold text-black dark:text-white block">{order.customer.name}</span>
-                        <span className="font-mono text-[11px] text-black dark:text-white">{order.customer.phone}</span>
-                      </td>
-
-                      <td className="p-3.5 max-w-[200px]">
-                        <p className="truncate text-black dark:text-white font-semibold">{order.customer.addressLine}</p>
-                        <span className="font-mono font-bold text-emerald-400">
-                          {order.customer.city}, {order.customer.pinCode}
-                        </span>
-                      </td>
-
-                      <td className="p-3.5 max-w-[180px]">
-                        <p className="truncate text-black dark:text-white font-semibold">{order.item.productName}</p>
-                        <span className="font-mono text-[10px] text-black dark:text-white">
-                          {order.item.sku} (x{order.item.quantity})
-                        </span>
-                      </td>
-
-                      <td className="p-3.5">
-                        <span className="px-2 py-0.5 rounded bg-slate-100 dark:bg-slate-800 text-black dark:text-white border border-slate-300 dark:border-slate-700 font-bold text-[11px]">
-                          {order.courier}
-                        </span>
-                      </td>
-
-                      <td className="p-3.5">
-                        <span
-                          className={`font-black ${
-                            order.paymentType === 'COD' ? 'text-amber-400' : 'text-emerald-400'
-                          }`}
-                        >
-                          {order.paymentType}
-                        </span>
-                        {order.paymentType === 'COD' && (
-                          <span className="block font-mono text-[11px] text-black dark:text-white font-bold">
-                            ₹{order.codAmount}
-                          </span>
-                        )}
-                      </td>
-
-                      <td className="p-3.5">
-                          <select
-                            value={order.status}
-                            onChange={(e) => {
-                              const newStatus = e.target.value as OrderStatus;
-                              if (newStatus === 'Shipped') {
-                                setTrackingOrder(order);
-                                return;
-                              }
-                              onUpdateStatus(order.id, newStatus);
-                            }}
-                            className={`px-2 py-1 rounded text-[10px] font-black uppercase tracking-wider bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 ${
-                              order.status === 'Printed'
-                                ? 'text-emerald-400 border-emerald-500/30'
-                                : order.status === 'Shipped'
-                                ? 'text-blue-400 border-blue-500/30'
-                                : order.status === 'Delivered'
-                                ? 'text-teal-400 border-teal-500/30'
-                                : order.status === 'Cancelled'
-                                ? 'text-red-400 border-red-500/30'
-                                : order.status === 'Returned'
-                                ? 'text-rose-400 border-rose-500/30'
-                                : order.status === 'Claims'
-                                ? 'text-purple-400 border-purple-500/30'
-                                : order.status === 'Processing' || order.status === 'Label Generated'
-                                ? 'text-indigo-400 border-indigo-500/30'
-                                : 'text-amber-400 border-amber-500/30'
-                            }`}
-                          >
-                            <option value="Pending">Pending</option>
-                            <option value="Processing">Processing</option>
-                            <option value="Label Generated">Label Generated</option>
-                            <option value="Printed">Printed</option>
-                            <option value="Shipped">Shipped</option>
-                            <option value="Delivered">Delivered</option>
-                            <option value="Cancelled">Cancelled</option>
-                            <option value="Claims">Claims</option>
-                            <option value="Returned">Returned</option>
-                          </select>
-                        </td>
-
-                      <td className="p-3.5 text-right">
-                        <div className="flex items-center justify-end gap-1.5">
-                          <button
-                            onClick={() => handleDownloadLabel(order)}
-                            disabled={downloadingId === order.id}
-                            className="px-2.5 py-1 rounded bg-slate-200 dark:bg-slate-700 text-black dark:text-white font-bold hover:bg-slate-600 transition text-xs flex-shrink-0 inline-flex items-center gap-1 disabled:opacity-40"
-                            title="Download Label as PNG"
-                          >
-                            <Download className="w-3.5 h-3.5" />
-                            <span>{downloadingId === order.id ? '...' : 'PNG'}</span>
-                          </button>
-
-                          <button
-                            onClick={() => onNavigateToGenerator(order)}
-                            className="px-2.5 py-1 rounded bg-emerald-500 text-slate-950 font-bold hover:bg-emerald-400 transition text-xs"
-                            title="Generate & Print 4x6 Label"
-                          >
-                            Print
-                          </button>
-
-                          {onNavigateToWarrantyCard && (
-                            <button
-                              onClick={() => onNavigateToWarrantyCard(order)}
-                              className="px-2 py-1 rounded bg-pink-500/15 hover:bg-pink-500/25 text-[#E11D48] dark:text-pink-400 font-bold transition text-xs flex items-center gap-1 border border-pink-500/30"
-                              title="Print 1-Year Warranty Card for this Customer"
-                            >
-                              <Award className="w-3.5 h-3.5" />
-                              <span>Card</span>
-                            </button>
-                          )}
-
-                          <button
-                            onClick={() => setDeleteConfirmId(order.id)}
-                            className="px-2.5 py-1 rounded bg-red-600 text-white font-bold hover:bg-red-500 transition text-xs flex items-center gap-1"
-                            title="Delete Order"
-                          >
-                            <Trash2 className="w-3.5 h-3.5" />
-                            Delete
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
-                  );
-                })
-              )}
-            </tbody>
-          </table>
-        </div>
-
-        {/* Pagination Footer */}
-        <div className="p-4 bg-slate-50 dark:bg-slate-950 border-t border-slate-200 dark:border-slate-800 flex items-center justify-between text-xs text-black dark:text-white">
-          <span>
-            Page <strong className="text-black dark:text-white">{currentPage}</strong> of {totalPages}
-          </span>
-
-          <div className="flex items-center gap-2">
-            <button
-              disabled={currentPage === 1}
-              onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
-              className="p-1.5 rounded-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 disabled:opacity-40 hover:bg-slate-100 dark:bg-slate-800 transition"
-            >
-              <ChevronLeft className="w-4 h-4" />
-            </button>
-            <button
-              disabled={currentPage === totalPages}
-              onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
-              className="p-1.5 rounded-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 disabled:opacity-40 hover:bg-slate-100 dark:bg-slate-800 transition"
-            >
-              <ChevronRight className="w-4 h-4" />
-            </button>
-          </div>
-        </div>
-      </div>
-
-      {/* Download Modal Overlay — renders label with full CSS then captures it */}
-      {downloadModalOrder && (
-        <div
-          className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/70"
-          aria-hidden="true"
-        >
-          <div className="flex flex-col items-center gap-4">
-            {/* Spinner text */}
-            <div className="text-black dark:text-white text-sm font-bold animate-pulse flex items-center gap-2">
-              <Download className="w-4 h-4" />
-              Generating label for {downloadModalOrder.id}...
-            </div>
-            {/* The actual label rendered with all Tailwind CSS active */}
-            <div ref={downloadLabelRef} className="shadow-2xl">
-              <ThermalLabel
-                order={downloadModalOrder}
-                settings={settings}
-                scale={1}
-              />
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Custom Delete Confirmation Modal */}
-      {deleteConfirmId && (
-        <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/60 backdrop-blur-sm">
-          <div className="bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-2xl shadow-2xl p-6 w-full max-w-sm mx-4">
-            <div className="flex items-center gap-3 mb-4">
-              <div className="w-10 h-10 rounded-full bg-red-500/20 flex items-center justify-center flex-shrink-0">
-                <Trash2 className="w-5 h-5 text-red-400" />
-              </div>
-              <div>
-                <h3 className="text-black dark:text-white font-bold text-lg leading-tight">Delete Order</h3>
-                <p className="text-black dark:text-white text-sm">This action cannot be undone.</p>
-              </div>
-            </div>
-            <p className="text-black dark:text-white text-sm mb-6">
-              Are you sure you want to permanently delete order <span className="font-bold text-black dark:text-white">{deleteConfirmId}</span>?
+    <div className="kdash min-h-full p-3 sm:p-5 md:p-7 select-none pb-32 md:pb-28">
+      <div className="space-y-5">
+        <header className="k-rise flex items-end justify-between gap-4" style={{ ['--i' as string]: 0 }}>
+          <div>
+            <h2 className="text-3xl sm:text-4xl font-bold leading-none k-display">Orders</h2>
+            <p className="text-sm k-muted mt-2">
+              <span className="font-semibold" style={{ color: 'var(--ink)' }}>{filtered.length.toLocaleString('en-IN')}</span> of {orders.length.toLocaleString('en-IN')}
+              {searchQuery ? <> matching “{searchQuery}”</> : ' orders'}
             </p>
+          </div>
+          <button onClick={() => setScannerOpen(true)} className="k-btn k-btn-ink px-5 py-3 text-sm" title="Scan an India Post tracking code to mark an order as shipped">
+            <ScanLine className="w-4 h-4" /> Scan tracking
+          </button>
+        </header>
+
+        {/* four metric tiles, each with a small live chart */}
+        <dl className="k-rise grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3 md:gap-4" style={{ ['--i' as string]: 1 }}>
+          <div className="k-card p-5 overflow-hidden">
+            <div className="flex items-start justify-between">
+              <dt className="text-sm k-muted">Placed today</dt>
+              <span className="w-9 h-9 rounded-xl flex items-center justify-center" style={{ background: 'color-mix(in srgb, var(--lime) 16%, var(--card2))' }}><CalendarDays className="w-[18px] h-[18px] k-lime-text" /></span>
+            </div>
+            <dd className="text-5xl font-bold k-display leading-none mt-3">{stats.today.toLocaleString('en-IN')}</dd>
+            <dd className="mt-4" aria-label={`Orders in the last 7 days: ${stats.week.map((d) => `${d.label} ${d.n}`).join(', ')}`}>
+              <div className="flex items-end gap-1.5 h-10" aria-hidden>
+                {stats.week.map((d, i) => (
+                  <span key={i} title={`${d.label}: ${d.n} orders`} className="flex-1 rounded-sm" style={{ height: `${Math.max(8, (d.n / Math.max(1, ...stats.week.map((x) => x.n))) * 100)}%`, background: i === 6 ? 'var(--lime)' : 'color-mix(in srgb, var(--lime) 32%, var(--card2))' }} />
+                ))}
+              </div>
+              <p className="text-xs k-muted mt-2">Last 7 days · {stats.week.reduce((n, d) => n + d.n, 0)} orders</p>
+            </dd>
+          </div>
+
+          <div className="k-card p-5 overflow-hidden">
+            <div className="flex items-start justify-between">
+              <dt className="text-sm k-muted">Waiting for a label</dt>
+              <span className="w-9 h-9 rounded-xl flex items-center justify-center" style={{ background: 'color-mix(in srgb, var(--lime) 16%, var(--card2))' }}><Printer className="w-[18px] h-[18px] k-lime-text" /></span>
+            </div>
+            <dd className="text-5xl font-bold k-display leading-none mt-3">{stats.toPrint.toLocaleString('en-IN')}</dd>
+            <dd className="mt-4">
+              <div className="h-2 rounded-full k-track overflow-hidden"><div className="h-full rounded-full k-bar bar-grow" style={{ width: `${stats.printedShare}%` }} /></div>
+              <p className="text-xs k-muted mt-2">{stats.printedShare}% of all orders are already printed</p>
+            </dd>
+          </div>
+
+          <div className="k-card p-5 overflow-hidden">
+            <div className="flex items-start justify-between">
+              <dt className="text-sm k-muted">Ready to ship</dt>
+              <span className="w-9 h-9 rounded-xl flex items-center justify-center" style={{ background: 'color-mix(in srgb, var(--lime) 16%, var(--card2))' }}><PackageCheck className="w-[18px] h-[18px] k-lime-text" /></span>
+            </div>
+            <dd className="text-5xl font-bold k-display leading-none mt-3">{stats.ready.toLocaleString('en-IN')}</dd>
+            <dd className="mt-4">
+              <div className="h-2 rounded-full k-track overflow-hidden"><div className="h-full rounded-full k-bar bar-grow" style={{ width: `${stats.shipShare}%` }} /></div>
+              <p className="text-xs k-muted mt-2">{stats.shippedCount} already with the courier ({stats.shipShare}%)</p>
+            </dd>
+          </div>
+
+          <div className="k-card p-5 overflow-hidden">
+            <div className="flex items-start justify-between">
+              <dt className="text-sm k-muted">COD on the road</dt>
+              <span className="w-9 h-9 rounded-xl flex items-center justify-center" style={{ background: 'color-mix(in srgb, var(--lime) 16%, var(--card2))' }}><Truck className="w-[18px] h-[18px] k-lime-text" /></span>
+            </div>
+            <dd className="text-5xl font-bold k-display leading-none mt-3">₹{Math.round(stats.codOnRoad).toLocaleString('en-IN')}</dd>
+            <dd className="mt-4">
+              <div className="h-2 rounded-full k-track overflow-hidden flex">
+                <div className="h-full k-bar bar-grow" style={{ width: `${stats.shippedCount ? (stats.shippedCod / stats.shippedCount) * 100 : 0}%` }} />
+              </div>
+              <p className="text-xs k-muted mt-2">{stats.shippedCod} of {stats.shippedCount} shipped parcels are COD</p>
+            </dd>
+          </div>
+        </dl>
+
+        {/* status tabs on the left, filters on the right */}
+        <div className="k-rise flex flex-col xl:flex-row xl:items-end justify-between gap-3 border-b k-rule" style={{ ['--i' as string]: 2 }}>
+          <nav aria-label="Filter by status">
+            <ul className="flex flex-wrap gap-x-7">
+              {pills.map(([id, label, n]) => {
+                const on = statusFilter === id;
+                return (
+                  <li key={id}>
+                    <button
+                      onClick={() => { setStatusFilter(id as OrderStatus | 'ALL'); setPage(1); }}
+                      aria-pressed={on}
+                      className="relative flex items-center gap-2 py-3 text-sm font-semibold whitespace-nowrap transition-colors"
+                      style={{ color: on ? 'var(--ink)' : 'var(--muted)' }}
+                    >
+                      {id !== 'ALL' && <span className="w-2 h-2 rounded-full" style={{ background: STATUS_DOT[id] }} />}
+                      {label} <span className="text-xs font-medium rounded-full px-2 py-0.5" style={{ background: on ? 'color-mix(in srgb, var(--lime) 20%, var(--card2))' : 'var(--card2)', color: on ? 'var(--ink)' : 'var(--muted)' }}>{n}</span>
+                      <span className="absolute left-0 right-0 -bottom-px h-0.5 rounded-full transition-transform" style={{ background: 'var(--lime)', transform: on ? 'scaleX(1)' : 'scaleX(0)' }} />
+                    </button>
+                  </li>
+                );
+              })}
+            </ul>
+          </nav>
+
+          <div className="flex items-center gap-2 flex-wrap pb-2.5">
+            <select aria-label="Courier" value={courierFilter} onChange={(e) => { setCourierFilter(e.target.value); setPage(1); }} className="k-field" style={{ width: 'auto', borderRadius: 999, padding: '.45rem 1rem', fontSize: '.8rem' }}>
+              <option value="ALL">All couriers</option>
+              {['Delhivery', 'DTDC', 'India Post', 'Shiprocket', 'NimbusPost', 'Bluedart', 'Ekart'].map((c) => <option key={c} value={c}>{c}</option>)}
+            </select>
+            <select aria-label="Payment type" value={paymentFilter} onChange={(e) => { setPaymentFilter(e.target.value); setPage(1); }} className="k-field" style={{ width: 'auto', borderRadius: 999, padding: '.45rem 1rem', fontSize: '.8rem' }}>
+              <option value="ALL">COD and prepaid</option>
+              <option value="COD">COD only</option>
+              <option value="Prepaid">Prepaid only</option>
+            </select>
+            {filtersActive && <button onClick={() => { setCourierFilter('ALL'); setPaymentFilter('ALL'); setPage(1); }} className="text-sm font-semibold underline">Clear</button>}
+            <button onClick={() => filtered.length && onAddToQueue(filtered)} disabled={!filtered.length} className="k-btn k-btn-ghost px-4 py-2 text-sm">
+              <ListPlus className="w-4 h-4" /> Add all {filtered.length.toLocaleString('en-IN')} to queue
+            </button>
+          </div>
+        </div>
+
+        {/* list */}
+        <section className="k-card k-hot overflow-hidden k-rise" style={{ ['--i' as string]: 3 }} aria-label="Orders">
+          <div className={`hidden lg:grid ${COLS} gap-4 px-5 py-3 text-xs font-semibold k-muted border-b k-rule items-center`}>
+            <input type="checkbox" checked={allOnPage} onChange={toggleAll} aria-label="Select all on this page" className="w-4 h-4" style={{ accentColor: 'var(--lime)' }} />
+            <span>Order</span><span>Customer</span><span>Deliver to</span><span>Product</span><span>Payment</span><span>Status</span><span className="text-right">Actions</span>
+          </div>
+
+          {rows.length === 0 ? (
+            <p className="p-14 text-center text-sm k-muted">No order matches. Try another search or clear the filters.</p>
+          ) : (
+            <ul>
+              {rows.map((o) => {
+                const isSel = selected.has(o.id);
+                return (
+                  <li key={o.id} className={`k-row flex flex-wrap items-center gap-x-4 gap-y-3 px-4 lg:px-5 py-4 border-t k-rule first:border-t-0 lg:grid ${COLS}`} style={{ background: isSel ? 'var(--card2)' : undefined, boxShadow: isSel ? 'inset 3px 0 0 var(--lime)' : undefined }}>
+                    <input type="checkbox" checked={isSel} onChange={() => toggle(o.id)} aria-label={`Select ${o.id}`} className="w-4 h-4 order-1 lg:order-1" style={{ accentColor: 'var(--lime)' }} />
+
+                    <div className="order-2 lg:order-2 flex-1 lg:flex-none min-w-0">
+                      <p className="font-mono font-bold text-sm">{o.id}</p>
+                      <p className="text-xs k-muted">{new Date(o.createdAt).toLocaleDateString('en-IN')}</p>
+                    </div>
+
+                    <label className="order-3 lg:order-7 flex items-center gap-2">
+                      <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ background: STATUS_DOT[o.status] || '#94a3b8' }} />
+                      <select aria-label={`Status of ${o.id}`} value={o.status} onChange={(e) => changeStatus(o, e.target.value as OrderStatus)} className="k-field" style={{ padding: '.4rem .7rem', borderRadius: 999, fontSize: '.8rem', fontWeight: 600, width: 'auto', background: `color-mix(in srgb, ${STATUS_DOT[o.status] || '#94a3b8'} 14%, var(--card2))`, borderColor: `color-mix(in srgb, ${STATUS_DOT[o.status] || '#94a3b8'} 38%, var(--line))` }}>
+                        {STATUS_ORDER.map((s) => <option key={s} value={s}>{s}</option>)}
+                      </select>
+                    </label>
+
+                    <div className="order-4 lg:order-3 basis-[calc(50%-.5rem)] lg:basis-auto min-w-0">
+                      <p className="font-semibold text-sm truncate">{o.customer.name}</p>
+                      <p className="font-mono text-xs k-muted">{o.customer.phone}</p>
+                    </div>
+
+                    <div className="order-5 lg:order-4 basis-[calc(50%-.5rem)] lg:basis-auto min-w-0">
+                      <p className="text-sm truncate">{o.customer.city}</p>
+                      <p className="font-mono text-xs k-muted">{o.customer.pinCode}</p>
+                    </div>
+
+                    <div className="order-6 lg:order-5 basis-[calc(50%-.5rem)] lg:basis-auto min-w-0">
+                      <p className="text-sm font-semibold truncate capitalize">{o.item.productName.toLowerCase()}</p>
+                      <p className="text-xs k-muted">{o.item.quantity > 1 ? `${o.item.quantity} pieces · ` : ''}{o.courier}</p>
+                    </div>
+
+                    <div className="order-7 lg:order-6 basis-[calc(50%-.5rem)] lg:basis-auto">
+                      {o.paymentType === 'COD'
+                        ? <p className="text-sm font-bold">₹{o.codAmount}</p>
+                        : <span className="inline-block text-xs font-bold rounded-full px-2.5 py-0.5" style={{ background: 'color-mix(in srgb, var(--lime) 20%, var(--card2))', color: 'var(--ink)' }}>Prepaid</span>}
+                      <p className="text-xs k-muted">{o.paymentType === 'COD' ? ((o.advancePaid || 0) > 0 ? `COD · advance ₹${o.advancePaid}` : 'COD') : ((o.advancePaid || 0) > 0 ? `paid ₹${o.advancePaid}` : 'paid')}</p>
+                    </div>
+
+                    <div className="order-8 lg:order-8 w-full lg:w-auto flex items-center justify-end gap-1.5">
+                      <button onClick={() => onNavigateToGenerator(o)} className="k-btn k-btn-outline-green px-4 h-9 text-xs" title="Open the label to print"><Printer className="w-4 h-4" /> Print</button>
+                      <IconBtn label="Edit customer or address" onClick={() => setEditOrder(o)}><Pencil className="w-4 h-4" /></IconBtn>
+                      <IconBtn label="Download label as PNG" onClick={() => download(o)} disabled={downloadingId === o.id}><Download className="w-4 h-4" /></IconBtn>
+                      {onNavigateToWarrantyCard && <IconBtn label="Print 1-year warranty card" onClick={() => onNavigateToWarrantyCard(o)}><Award className="w-4 h-4" /></IconBtn>}
+                      <IconBtn label="Delete order" onClick={() => setDeleteConfirmId(o.id)} danger><Trash2 className="w-4 h-4" /></IconBtn>
+                    </div>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+
+          <div className="px-5 py-3.5 border-t k-rule flex items-center justify-between text-sm">
+            <span className="k-muted">{filtered.length === 0 ? '0 orders' : `${(current - 1) * PAGE + 1}–${Math.min(current * PAGE, filtered.length)} of ${filtered.length.toLocaleString('en-IN')}`}</span>
+            <div className="flex items-center gap-2">
+              <span className="k-muted hidden sm:inline">Page {current} of {totalPages}</span>
+              <button disabled={current === 1} onClick={() => setPage(current - 1)} aria-label="Previous page" className="k-btn k-btn-ghost w-9 h-9"><ChevronLeft className="w-4 h-4" /></button>
+              <button disabled={current === totalPages} onClick={() => setPage(current + 1)} aria-label="Next page" className="k-btn k-btn-ghost w-9 h-9"><ChevronRight className="w-4 h-4" /></button>
+            </div>
+          </div>
+        </section>
+      </div>
+
+      {/* selection bar */}
+      {selected.size > 0 && (
+        <div className="fixed bottom-5 left-1/2 -translate-x-1/2 z-40 k-card flex items-center gap-2 p-2 pl-5 shadow-2xl k-rise" style={{ borderRadius: 999, ['--i' as string]: 0 }} role="region" aria-label="Selected orders">
+          <span className="text-sm font-semibold whitespace-nowrap">{selected.size} selected</span>
+          <button onClick={() => onAddToQueue(selectedList)} className="k-btn k-btn-ink px-4 h-10 text-sm"><ListPlus className="w-4 h-4" /> Add to queue</button>
+          <button onClick={() => onDownloadBulkPDF(selectedList)} className="k-btn k-btn-ghost px-4 h-10 text-sm hidden sm:inline-flex"><FileDown className="w-4 h-4" /> PDF</button>
+          <button onClick={() => setSelected(new Set())} aria-label="Clear selection" className="k-btn k-btn-ghost w-10 h-10"><X className="w-4 h-4" /></button>
+        </div>
+      )}
+
+      {overlay}
+
+      {editOrder && (
+        <OrderEditModal
+          order={editOrder}
+          onClose={() => setEditOrder(null)}
+          onSave={async (changes) => {
+            const ok = await onEditOrder(editOrder.id, changes);
+            if (ok) setEditedId(editOrder.id);
+            return ok;
+          }}
+          onSavedAndPrint={(updated) => onNavigateToGenerator(updated)}
+        />
+      )}
+
+      {editedId && (
+        <div className="fixed top-6 left-1/2 -translate-x-1/2 z-[100] k-card flex items-center gap-3 px-4 py-3 shadow-2xl k-rise" role="status" style={{ ['--i' as string]: 0 }}>
+          <span className="w-9 h-9 rounded-xl flex items-center justify-center" style={{ background: 'color-mix(in srgb, var(--lime) 18%, var(--card2))' }}><CheckCircle2 className="w-5 h-5 k-lime-text" /></span>
+          <p className="text-sm font-semibold">Order <span className="font-mono">{editedId}</span> updated</p>
+        </div>
+      )}
+
+      {deleteConfirmId && (
+        <div className="fixed inset-0 z-[9999] flex items-center justify-center px-4" style={{ background: 'rgba(0,0,0,.6)' }} role="dialog" aria-modal="true" aria-label="Delete order">
+          <div className="k-card p-6 w-full max-w-sm shadow-2xl">
+            <div className="flex items-center gap-3 mb-4">
+              <span className="w-11 h-11 rounded-full flex items-center justify-center k-card2" style={{ color: 'var(--bad)' }}><Trash2 className="w-5 h-5" /></span>
+              <div>
+                <h3 className="font-bold text-lg leading-tight">Delete this order?</h3>
+                <p className="text-sm k-muted">This cannot be undone.</p>
+              </div>
+            </div>
+            <p className="text-sm mb-6">Order <span className="font-mono font-bold">{deleteConfirmId}</span> will be removed for good.</p>
             <div className="flex gap-3">
-              <button
-                onClick={() => setDeleteConfirmId(null)}
-                className="flex-1 px-4 py-2 rounded-lg bg-slate-200 dark:bg-slate-700 text-black dark:text-white font-semibold hover:bg-slate-600 transition"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={() => { onDeleteOrder(deleteConfirmId); setDeleteConfirmId(null); }}
-                className="flex-1 px-4 py-2 rounded-lg bg-red-600 text-white font-bold hover:bg-red-500 transition flex items-center justify-center gap-2"
-              >
-                <Trash2 className="w-4 h-4" />
-                Delete
-              </button>
+              <button autoFocus onClick={() => setDeleteConfirmId(null)} className="flex-1 k-btn k-btn-ghost py-2.5 text-sm">Keep it</button>
+              <button onClick={() => { onDeleteOrder(deleteConfirmId); setDeleteConfirmId(null); }} className="flex-1 k-btn py-2.5 text-sm text-white" style={{ background: 'var(--bad)' }}><Trash2 className="w-4 h-4" /> Delete</button>
             </div>
           </div>
         </div>
       )}
-      
+
       <TrackingModal
         isOpen={!!trackingOrder}
         onClose={() => setTrackingOrder(null)}
@@ -708,62 +385,32 @@ export const OrdersView: React.FC<OrdersViewProps> = ({
           if (trackingOrder) {
             onUpdateStatus(trackingOrder.id, 'Shipped');
             onUpdateTracking(trackingOrder.id, trackingNumber, shippingLabelUrl);
-            setShippedToast({
-              orderId: trackingOrder.id,
-              customerName: trackingOrder.customer.name,
-              trackingNumber: trackingNumber.toUpperCase()
-            });
+            setToast({ orderId: trackingOrder.id, customerName: trackingOrder.customer.name, trackingNumber: trackingNumber.toUpperCase() });
             setTrackingOrder(null);
           }
         }}
       />
 
       <TrackingScannerModal
-        isOpen={isTrackingScannerOpen}
-        onClose={() => setIsTrackingScannerOpen(false)}
+        isOpen={scannerOpen}
+        onClose={() => setScannerOpen(false)}
         orders={orders}
         onUpdateStatus={onUpdateStatus}
         onUpdateTracking={(id, trackingNumber, url) => {
           onUpdateTracking(id, trackingNumber, url);
-          const target = orders.find(o => o.id === id);
-          if (target) {
-            setShippedToast({
-              orderId: id,
-              customerName: target.customer.name,
-              trackingNumber: trackingNumber.toUpperCase()
-            });
-          }
+          const target = orders.find((o) => o.id === id);
+          if (target) setToast({ orderId: id, customerName: target.customer.name, trackingNumber: trackingNumber.toUpperCase() });
         }}
       />
 
-      {/* Floating Scan & Shipped Success Toast Banner */}
-      {shippedToast && (
-        <div className="fixed top-6 left-1/2 -translate-x-1/2 z-[100] flex items-center gap-3.5 px-5 py-3.5 bg-slate-950 text-white rounded-2xl shadow-2xl border-2 border-emerald-500 animate-in fade-in slide-in-from-top-4 duration-300">
-          <div className="w-9 h-9 rounded-xl bg-emerald-500 text-slate-950 flex items-center justify-center font-bold shadow-md">
-            <CheckCircle2 className="w-5 h-5 stroke-[2.5]" />
+      {toast && (
+        <div className="fixed top-6 left-1/2 -translate-x-1/2 z-[100] k-card flex items-center gap-3 px-4 py-3 shadow-2xl k-rise" role="status" style={{ ['--i' as string]: 0 }}>
+          <span className="w-9 h-9 rounded-xl k-card2 flex items-center justify-center"><CheckCircle2 className="w-5 h-5 k-lime-text" /></span>
+          <div className="min-w-0">
+            <p className="text-sm font-semibold">Marked as shipped</p>
+            <p className="text-xs k-muted truncate">{toast.orderId} · {toast.customerName} · <span className="font-mono">{toast.trackingNumber}</span></p>
           </div>
-          <div>
-            <div className="flex items-center gap-2">
-              <span className="text-[11px] font-black uppercase tracking-wider text-emerald-400">
-                Scan Success · Order Marked as Shipped
-              </span>
-            </div>
-            <div className="text-xs font-bold text-slate-200 flex items-center gap-2 mt-0.5">
-              <span className="text-white font-black">{shippedToast.orderId}</span>
-              <span>·</span>
-              <span>{shippedToast.customerName}</span>
-              <span>·</span>
-              <span className="font-mono bg-emerald-500/20 text-emerald-300 px-2 py-0.5 rounded text-[11px] font-black border border-emerald-500/40">
-                {shippedToast.trackingNumber}
-              </span>
-            </div>
-          </div>
-          <button
-            onClick={() => setShippedToast(null)}
-            className="ml-3 p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition"
-          >
-            <X className="w-4 h-4" />
-          </button>
+          <button onClick={() => setToast(null)} aria-label="Dismiss" className="ml-2 k-muted"><X className="w-4 h-4" /></button>
         </div>
       )}
     </div>
