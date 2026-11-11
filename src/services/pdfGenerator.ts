@@ -1,5 +1,5 @@
 import jsPDF from 'jspdf';
-import html2canvas from 'html2canvas';
+import { captureCanvas } from '../utils/captureImage';
 
 export class PDFGeneratorService {
   /**
@@ -10,12 +10,7 @@ export class PDFGeneratorService {
     filename: string = 'label.pdf'
   ): Promise<void> {
     try {
-      const canvas = await html2canvas(element, {
-        scale: 3, // 300 DPI rendering quality for crisp barcode & text
-        useCORS: true,
-        logging: false,
-        backgroundColor: '#ffffff'
-      });
+      const canvas = await captureCanvas(element, 3);
 
       const imgData = canvas.toDataURL('image/png');
       const pdf = new jsPDF({
@@ -54,12 +49,7 @@ export class PDFGeneratorService {
     for (let i = 0; i < total; i++) {
       if (onProgress) onProgress(i + 1, total);
 
-      const canvas = await html2canvas(labelElements[i], {
-        scale: 3,
-        useCORS: true,
-        logging: false,
-        backgroundColor: '#ffffff'
-      });
+      const canvas = await captureCanvas(labelElements[i], 3);
 
       const imgData = canvas.toDataURL('image/png');
 

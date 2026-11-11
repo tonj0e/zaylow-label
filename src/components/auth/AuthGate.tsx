@@ -3,6 +3,10 @@ import type { Session } from '@supabase/supabase-js';
 import { Eye, EyeOff, Loader2, Lock, User } from 'lucide-react';
 import { supabase } from '../../services/supabase';
 import { AuthService } from '../../services/authService';
+import { InstallApp } from './InstallApp';
+
+// the logo intro plays once per page load
+let introPlayed = false;
 
 /** Nothing in the app is shown until someone has signed in. */
 export const AuthGate: React.FC<{ children: React.ReactNode }> = ({ children }) => {
@@ -13,6 +17,7 @@ export const AuthGate: React.FC<{ children: React.ReactNode }> = ({ children }) 
   const [show, setShow] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  const [intro, setIntro] = useState(() => !introPlayed && !window.matchMedia('(prefers-reduced-motion: reduce)').matches);
 
   useEffect(() => {
     let alive = true;
@@ -20,6 +25,12 @@ export const AuthGate: React.FC<{ children: React.ReactNode }> = ({ children }) 
     const { data } = supabase.auth.onAuthStateChange((_e, s) => { setSession(s); setChecking(false); });
     return () => { alive = false; data.subscription.unsubscribe(); };
   }, []);
+
+  useEffect(() => {
+    if (checking || !intro) return;
+    const t = setTimeout(() => { introPlayed = true; setIntro(false); }, 1900);
+    return () => clearTimeout(t);
+  }, [checking, intro]);
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -37,14 +48,13 @@ export const AuthGate: React.FC<{ children: React.ReactNode }> = ({ children }) 
       {checking ? (
         <Loader2 className="w-6 h-6 animate-spin" aria-label="Checking your sign-in" />
       ) : (
-        <main className="k-card w-full max-w-sm p-6 md:p-8 space-y-6 k-rise">
+        <>
+        {intro && (
+          <div className="zl-splash" aria-hidden="true"><img src="/zaylow-logo.png" alt="" className="zl-logo dark:invert" /></div>
+        )}
+        <main className={`k-card w-full max-w-sm p-6 md:p-8 space-y-6 ${intro ? 'zl-card' : 'k-rise'}`}>
           <div className="flex items-center gap-3">
-            <svg viewBox="0 0 100 100" className="w-10 h-10" aria-hidden="true">
-              <path d="M50 42 C50 42 50 25 38 18 C26 11 15 23 22 37 C29 51 45 49 50 42Z" fill="currentColor" />
-              <path d="M58 50 C58 50 75 50 82 38 C89 26 77 15 63 22 C49 29 51 45 58 50Z" fill="currentColor" />
-              <path d="M50 58 C50 58 50 75 62 82 C74 89 85 77 78 63 C71 49 55 51 50 58Z" fill="currentColor" />
-              <path d="M42 50 C42 50 25 50 18 62 C11 74 23 85 37 78 C51 71 49 55 42 50Z" fill="currentColor" />
-            </svg>
+            <img src="/zaylow-logo.png" alt="" className="w-10 h-10 object-contain dark:invert zl-mark" />
             <div><h1 className="text-2xl font-bold k-display leading-none">ZAYLOW</h1><p className="text-sm k-muted mt-1">Warehouse sign in</p></div>
           </div>
 
@@ -67,9 +77,23 @@ export const AuthGate: React.FC<{ children: React.ReactNode }> = ({ children }) 
             {error && <p role="alert" className="text-sm font-medium rounded-2xl px-4 py-3" style={{ background: 'color-mix(in srgb, var(--bad) 12%, transparent)' }}>{error}</p>}
             <button type="submit" disabled={busy} className="k-btn k-btn-lime w-full py-3 text-sm">{busy ? <Loader2 className="w-4 h-4 animate-spin" /> : null} {busy ? 'Signing in…' : 'Sign in'}</button>
           </form>
+          <InstallApp />
           <p className="text-xs k-muted">Accounts are made by the owner. Forgot your password? Ask the owner to reset it.</p>
         </main>
+        </>
       )}
+      <style>{`
+        .zl-splash{position:fixed;inset:0;z-index:60;display:grid;place-items:center;background:var(--bg,#f0f2ee);animation:zl-splash-out .5s ease 1.35s forwards}
+        .zl-logo{width:112px;height:112px;object-fit:contain;animation:zl-pop .8s cubic-bezier(.22,1,.36,1) both, zl-away .5s cubic-bezier(.5,0,.75,0) 1.35s forwards}
+        .zl-card{animation:zl-card .6s cubic-bezier(.22,1,.36,1) 1.45s both}
+        .zl-mark{animation:zl-spin .9s cubic-bezier(.22,1,.36,1) 1.6s both}
+        @keyframes zl-pop{from{opacity:0;transform:scale(.55) rotate(-120deg)}to{opacity:1;transform:scale(1) rotate(0)}}
+        @keyframes zl-away{to{transform:scale(.35) translateY(-160px);opacity:0}}
+        @keyframes zl-splash-out{to{opacity:0;visibility:hidden}}
+        @keyframes zl-card{from{opacity:0;transform:translateY(28px) scale(.97)}to{opacity:1;transform:none}}
+        @keyframes zl-spin{from{transform:rotate(-180deg) scale(.6)}to{transform:none}}
+        @media (prefers-reduced-motion: reduce){.zl-splash,.zl-logo,.zl-card,.zl-mark{animation:none!important}.zl-splash{display:none}}
+      `}</style>
     </div>
   );
 };

@@ -82,24 +82,33 @@ export const OrderEntryModal: React.FC<OrderEntryModalProps> = ({ isOpen, onClos
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [pasteText, setPasteText] = useState('');
   const [pasteNote, setPasteNote] = useState<{ ok: string[]; check: string[] } | null>(null);
+  const [districtHints, setDistrictHints] = useState<{ name: string; why: string }[]>([]);
+  const pasteTicket = useRef(0);
 
   // One paste fills the customer and address boxes. Everything stays editable.
   const fillFromText = async (text: string) => {
+    const ticket = ++pasteTicket.current;
     const r = parseAddress(text);
     if (!text.trim()) { setPasteNote(null); return; }
-    if (r.name) setCustomerName(r.name);
-    if (r.phone) setPhone(r.phone);
-    if (r.addressLine) setAddressLine(r.addressLine);
-    if (r.landmark) setLandmark(r.landmark);
-    if (r.city) setCity(r.city);
-    if (r.pinCode) setPinCode(r.pinCode);
-    if (r.state) setState(r.state);
-    if (r.district) setDistrict(r.district);
+    // a new paste replaces the whole customer block, so nothing from an earlier customer is left behind
+    setCustomerName(r.name); setPhone(r.phone); setAddressLine(r.addressLine); setLandmark(r.landmark);
+    setCity(r.city); setPinCode(r.pinCode); setState(r.state); setDistrict(r.district);
     setErrors((p) => ({ ...p, customerName: '', phone: '', addressLine: '', city: '', pinCode: '' }));
-    let district = r.district;
-    if (!district && r.state && r.pinCode.length === 6) { district = await districtFromPin(r.pinCode, r.state); if (district) setDistrict(district); }
-    const got: [string, string][] = [['Name', r.name], ['Phone', r.phone && r.phone.length === 10 ? r.phone : ''], ['Address', r.addressLine], ['City', r.city], ['PIN code', r.pinCode.length === 6 ? r.pinCode : ''], ['State', r.state], ['District', district]];
-    setPasteNote({ ok: got.filter(([, v]) => v).map(([k]) => k), check: got.filter(([, v]) => !v).map(([k]) => k) });
+    // the district is never chosen for you: the boxes below only get it when the message says "District: ...".
+    // Otherwise the district the message names and the one the PIN points to are offered as buttons.
+    setDistrictHints([]);
+    if (!r.district) {
+      const hints = r.districtHints.map((name) => ({ name, why: 'in the message' }));
+      if (r.state && r.pinCode.length === 6) {
+        const fromPin = await districtFromPin(r.pinCode, r.state);
+        if (ticket !== pasteTicket.current) return; // a newer paste, or a new order, came in meanwhile
+        if (fromPin && !hints.some((h) => h.name === fromPin)) hints.push({ name: fromPin, why: 'a guess from the PIN code' });
+        else if (fromPin) hints.forEach((h) => { if (h.name === fromPin) h.why = 'in the message, and the PIN code agrees'; });
+      }
+      setDistrictHints(hints);
+    }
+    const got: [string, string][] = [['Name', r.name], ['Phone', r.phone && r.phone.length === 10 ? r.phone : ''], ['Address', r.addressLine], ['PIN code', r.pinCode.length === 6 ? r.pinCode : ''], ['State', r.state]];
+    setPasteNote({ ok: got.filter(([, v]) => v).map(([k]) => k), check: [...got.filter(([, v]) => !v).map(([k]) => k), ...(r.district ? [] : ['District (choose it)'])] });
   };
   const [saveError, setSaveError] = useState('');
 
@@ -122,6 +131,8 @@ export const OrderEntryModal: React.FC<OrderEntryModalProps> = ({ isOpen, onClos
     setCourier(settings.defaultCourier || 'India Post'); setPaymentType(settings.defaultPaymentType || 'COD');
     setCodAmount(''); setAdvancePaid('100'); setPaidTouched(false); setWarrantyType('0'); setCustomWarrantyDays('');
     setErrors({}); setSaveError(''); setIsScannerOpen(false); setPendingOrder(null);
+    // the paste box and its notes start empty too, and a late answer for the old order is ignored
+    pasteTicket.current += 1; setPasteText(''); setPasteNote(null); setDistrictHints([]);
     setStockLoading(true);
     DataService.getStockSummary().then((rows) => setInventory(rows as StockRow[])).catch(console.error).finally(() => setStockLoading(false));
     setTimeout(() => { if (window.matchMedia('(min-width: 768px)').matches) nameRef.current?.focus(); }, 50);
@@ -197,8 +208,8 @@ export const OrderEntryModal: React.FC<OrderEntryModalProps> = ({ isOpen, onClos
     if (!productName.trim()) { setErrors((p) => ({ ...p, productName: 'Choose a product before downloading the label.' })); document.getElementById('oe-product')?.focus(); return; }
     if (!labelRef.current) return;
     try {
-      const { default: html2canvas } = await import('html2canvas');
-      const canvas = await html2canvas(labelRef.current, { scale: 3, useCORS: true });
+      const { captureCanvas } = await import('../../utils/captureImage');
+      const canvas = await captureCanvas(labelRef.current, 3);
       const link = document.createElement('a');
       link.download = `label-${draftOrder.id}.png`;
       link.href = canvas.toDataURL('image/png');
@@ -249,7 +260,8 @@ export const OrderEntryModal: React.FC<OrderEntryModalProps> = ({ isOpen, onClos
                 <textarea id="oe-paste" rows={3} value={pasteText} onChange={(e) => setPasteText(e.target.value)} onPaste={(e) => { const t = e.clipboardData.getData('text'); if (t) { e.preventDefault(); setPasteText(t); void fillFromText(t); } }} placeholder={'Paste here: name, phone, address, PIN code.\nThe boxes below fill in by themselves.'} className="k-field text-sm" />
                 <div className="flex items-center gap-2 flex-wrap">
                   <button type="button" onClick={() => void fillFromText(pasteText)} disabled={!pasteText.trim()} className="k-btn k-btn-soft px-4 py-2 text-sm">Fill the boxes</button>
-                  {pasteText && <button type="button" onClick={() => { setPasteText(''); setPasteNote(null); }} className="text-sm font-semibold underline k-muted">Clear</button>}
+                  {pasteText && <button type="button" onClick={() => { setPasteText(''); setPasteNote(null); setDistrictHints([]); }} className="text-sm font-semibold underline k-muted">Clear</button>}
+                  {districtHints.length > 0 && <span className="flex items-center gap-1.5 flex-wrap text-xs">District? {districtHints.map((h) => <button key={h.name} type="button" onClick={() => { setDistrict(h.name); setDistrictHints([]); }} className="k-chip" title={`Found ${h.why}`}>{h.name} <span className="opacity-60 font-normal">({h.why})</span></button>)}</span>}
                   {pasteNote && <p role="status" className="text-xs" aria-live="polite">{pasteNote.ok.length > 0 && <span className="k-lime-text font-semibold">Filled: {pasteNote.ok.join(', ')}. </span>}{pasteNote.check.length > 0 && <span className="k-warn font-semibold">Please check: {pasteNote.check.join(', ')}.</span>}</p>}
                 </div>
               </div>
@@ -346,6 +358,11 @@ export const OrderEntryModal: React.FC<OrderEntryModalProps> = ({ isOpen, onClos
                 <div><p className="font-bold k-display">Label preview</p><p className="text-xs k-muted">4 × 6 inch thermal label</p></div>
                 <button type="button" onClick={handleDownload} className="k-btn k-btn-soft px-3.5 py-2 text-sm"><Download className="w-4 h-4" /> Download</button>
               </div>
+              {(() => {
+                const wh = settings.warehouse;
+                const missing = [!wh?.addressLine?.trim() && 'address', !wh?.pinCode?.trim() && 'PIN code', !wh?.phone?.trim() && 'phone'].filter(Boolean);
+                return missing.length ? <p role="note" className="text-xs rounded-xl px-3 py-2 mb-3 k-warn" style={{ background: 'color-mix(in srgb, var(--warn) 14%, transparent)' }}>The FROM box on this label has no {missing.join(', ')}. Add it under Settings, then Sender address.</p> : null;
+              })()}
               <div className="overflow-hidden rounded-xl mx-auto" style={{ width: 'min(100%, 17.5rem)', height: '26.5rem' }}>
                 <div style={{ transform: 'scale(0.7)', transformOrigin: 'top left', width: 'max-content' }}>
                   <ThermalLabel order={draftOrder} settings={settings} scale={1} innerRef={labelRef} />

@@ -26,6 +26,8 @@ export const buildRemarks = (existing: string | null | undefined, e: RemarkEdits
   if (e.landmark.trim()) tokens += ` | LMK:${e.landmark.trim()}`;
   const delivered = pick(/DLV:(\d{4}-\d{2}-\d{2})/);
   if (delivered) tokens += ` | DLV:${delivered}`;
+  const cardPrinted = pick(/WCP:(\d{4}-\d{2}-\d{2})/);
+  if (cardPrinted) tokens += ` | WCP:${cardPrinted}`;
 
   const notes = e.notes.trim();
   return notes ? `${notes} ${tokens}` : tokens;

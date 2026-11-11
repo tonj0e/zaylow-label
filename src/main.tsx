@@ -82,3 +82,8 @@ root.render(
     </ErrorBoundary>
   </StrictMode>,
 )
+
+// Let phones install the site as an app (Android install prompt, iPhone Add to Home Screen)
+if ('serviceWorker' in navigator && import.meta.env.PROD) {
+  window.addEventListener('load', () => { navigator.serviceWorker.register('/sw.js').catch(() => { /* not fatal */ }); });
+}

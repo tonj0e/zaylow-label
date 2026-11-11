@@ -42,6 +42,8 @@ export interface Order {
   advancePaid?: number;
   /** Day India Post delivered it (YYYY-MM-DD), stored as DLV:date in remarks. */
   deliveredAt?: string;
+  /** Day the 1-year warranty card was printed (YYYY-MM-DD), stored as WCP:date in remarks. */
+  cardPrintedAt?: string;
   status: OrderStatus;
   createdAt: string;
   cartonId?: string;

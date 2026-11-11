@@ -5,15 +5,16 @@ export const INITIAL_SETTINGS: CompanySettings = {
   tagline: 'Premium Lifestyle & Fashion',
   logoUrl: '/zaylow-logo.png',
   warehouse: {
-    companyName: 'ZAYLOW Fulfillment Hub 01',
-    contactPerson: 'Zaylow Logistics Desk',
-    phone: '+91 98765 43210',
-    addressLine: 'Plot 42, Phase 3, Udyog Vihar, Sector 19',
-    city: 'Gurugram',
-    state: 'Haryana',
-    pinCode: '122016',
-    gstin: '07AAAAA0000A1Z5'
+    companyName: 'ZAYLOW',
+    contactPerson: '',
+    phone: '',
+    addressLine: '',
+    city: '',
+    state: '',
+    pinCode: '',
+    gstin: ''
   },
+
   defaultCourier: 'Delhivery',
   defaultPaymentType: 'COD',
   paperSize: '100x150mm',

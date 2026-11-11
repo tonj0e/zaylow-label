@@ -3,14 +3,15 @@ import type { Order } from '../../types';
 import { DataService } from '../../services/dataService';
 import { WarrantyCard } from './WarrantyCard';
 import { CARD_DIMENSIONS, type CardSizeOption } from '../../constants/warrantyCardSizes';
-import html2canvas from 'html2canvas';
 import jsPDF from 'jspdf';
-import { Check, ChevronLeft, ChevronRight, Download, Eye, FileDown, PackageCheck, PencilLine, Printer, Search, Users } from 'lucide-react';
+import { Check, CheckSquare, ChevronLeft, ChevronRight, Download, Eye, FileDown, Loader2, PackageCheck, PencilLine, Printer, Search, Square, Users } from 'lucide-react';
 import { Switch } from '../common/Switch';
 
 interface WarrantyCardViewProps {
   orders?: Order[];
   initialOrder?: Order | null;
+  /** called after cards are marked printed, so the orders are loaded again */
+  onOrdersChanged?: () => void | Promise<void>;
 }
 
 // Helper to calculate exact +1 year end date (e.g. 1/10/2026 -> 1/10/2027)
@@ -68,7 +69,8 @@ const cardProductName = (sold?: string): string => {
 
 export const WarrantyCardView: React.FC<WarrantyCardViewProps> = ({
   orders: propOrders,
-  initialOrder
+  initialOrder,
+  onOrdersChanged
 }) => {
   const [orders, setOrders] = useState<Order[]>(propOrders || []);
   const [selectedOrder, setSelectedOrder] = useState<Order | null>(initialOrder || null);
@@ -107,11 +109,32 @@ export const WarrantyCardView: React.FC<WarrantyCardViewProps> = ({
   const [zoomLevel, setZoomLevel] = useState<'auto' | '85' | '100'>('auto');
   const [isExporting, setIsExporting] = useState(false);
   const [notice, setNotice] = useState('');
+  const [okNote, setOkNote] = useState('');
   const [tab, setTab] = useState<'customer' | 'card' | 'edit'>('card');
   const [vw, setVw] = useState(() => (typeof window === 'undefined' ? 1280 : window.innerWidth));
   useEffect(() => { const f = () => setVw(window.innerWidth); window.addEventListener('resize', f); return () => window.removeEventListener('resize', f); }, []);
 
   const printContainerRef = useRef<HTMLDivElement>(null);
+
+  // which cards are printed: the order's saved day, with instant overrides while the save is on its way
+  const [printedOverride, setPrintedOverride] = useState<Record<string, string | null>>({});
+  const printedAt = (o: Order): string | undefined => (o.id in printedOverride ? printedOverride[o.id] || undefined : o.cardPrintedAt);
+  const [stateFilter, setStateFilter] = useState<'all' | 'pending' | 'printed'>('pending');
+  const [productFilter, setProductFilter] = useState<string>('all');
+  const [picked, setPicked] = useState<Set<string>>(new Set());
+  const [batch, setBatch] = useState<{ done: number; total: number } | null>(null);
+  const [batchOrder, setBatchOrder] = useState<Order | null>(null);
+  const batchRef = useRef<HTMLDivElement>(null);
+  const today = () => new Date().toISOString().slice(0, 10);
+  const markPrinted = async (ids: string[], printed: boolean) => {
+    setPrintedOverride((m) => { const n = { ...m }; ids.forEach((id) => { n[id] = printed ? today() : null; }); return n; });
+    const ok = await DataService.setCardPrinted(ids, printed);
+    if (!ok) setNotice('The printed status could not be saved. Check the connection and try again.');
+    else await onOrdersChanged?.();
+  };
+
+  // keep in step with the orders the site loads
+  useEffect(() => { if (propOrders && propOrders.length) setOrders(propOrders); }, [propOrders]);
 
   // Load orders if not provided
   useEffect(() => {
@@ -137,28 +160,13 @@ export const WarrantyCardView: React.FC<WarrantyCardViewProps> = ({
     }
   }, [initialOrder]);
 
-  // Helper to test if an order has ~1 year warranty (duration >= 300 days or remarks/dates)
-  const isOneYearOrder = (order: Order): boolean => {
-    if (order.warrantyStart && order.warrantyEnd) {
-      const start = new Date(order.warrantyStart).getTime();
-      const end = new Date(order.warrantyEnd).getTime();
-      const days = Math.round((end - start) / (1000 * 3600 * 24));
-      if (days >= 300) return true;
-    }
-    const notes = (order.notes || '').toLowerCase();
-    const prod = (order.item?.productName || '').toLowerCase();
-    if (notes.includes('1 year') || notes.includes('365') || prod.includes('period massager')) {
-      return true;
-    }
-    return false;
-  };
+  // Only the Premium (699) massager carries the 1-year warranty. The normal 499 one does not get a card.
+  const isOneYearOrder = (order: Order): boolean => /premium/i.test(order.item?.productName || '');
 
-  // Filter orders
-  const filteredOrders = useMemo(() => {
+  // Filter orders: 1-year only, then the search, then Pending / Printed
+  const baseOrders = useMemo(() => {
     return orders.filter(o => {
-      if (onlyOneYearFilter && !isOneYearOrder(o)) {
-        return false;
-      }
+      if (onlyOneYearFilter && !isOneYearOrder(o)) return false;
       if (!searchQuery.trim()) return true;
       const q = searchQuery.toLowerCase().trim();
       return (
@@ -168,7 +176,26 @@ export const WarrantyCardView: React.FC<WarrantyCardViewProps> = ({
         (o.trackingNumber && o.trackingNumber.toLowerCase().includes(q))
       );
     });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [orders, onlyOneYearFilter, searchQuery]);
+  const counts = useMemo(() => {
+    let printed = 0;
+    baseOrders.forEach((o) => { if (o.id in printedOverride ? printedOverride[o.id] : o.cardPrintedAt) printed += 1; });
+    return { all: baseOrders.length, printed, pending: baseOrders.length - printed };
+  }, [baseOrders, printedOverride]);
+  const stateOrders = useMemo(() => {
+    if (stateFilter === 'all') return baseOrders;
+    return baseOrders.filter((o) => { const done = !!(o.id in printedOverride ? printedOverride[o.id] : o.cardPrintedAt); return stateFilter === 'printed' ? done : !done; });
+  }, [baseOrders, stateFilter, printedOverride]);
+  // Product groups (for example Standard and Premium) with how many cards each has in the current Pending/Printed view
+  const productGroups = useMemo(() => {
+    const m = new Map<string, number>();
+    stateOrders.forEach((o) => { const n = cardProductName(o.item?.productName); m.set(n, (m.get(n) || 0) + 1); });
+    return [...m.entries()].sort((a, b) => b[1] - a[1]);
+  }, [stateOrders]);
+  const filteredOrders = useMemo(() => (
+    productFilter === 'all' ? stateOrders : stateOrders.filter((o) => cardProductName(o.item?.productName) === productFilter)
+  ), [stateOrders, productFilter]);
 
   const oneYearCount = useMemo(() => {
     return orders.filter(isOneYearOrder).length;
@@ -235,24 +262,8 @@ export const WarrantyCardView: React.FC<WarrantyCardViewProps> = ({
     }
 
     try {
-      const canvas = await html2canvas(el, {
-        scale: scale,
-        useCORS: true,
-        backgroundColor: '#ffffff',
-        logging: false,
-        onclone: (clonedDoc) => {
-          // Double guarantee: ensure cloned element and its parents have zero transforms
-          const clonedCard = clonedDoc.querySelector('.warranty-card-element') as HTMLElement;
-          if (clonedCard) {
-            clonedCard.style.transform = 'none';
-            let curr = clonedCard.parentElement;
-            while (curr && curr !== clonedDoc.body) {
-              curr.style.transform = 'none';
-              curr = curr.parentElement;
-            }
-          }
-        }
-      });
+      const { captureCanvas } = await import('../../utils/captureImage');
+      const canvas = await captureCanvas(el, scale);
       return canvas;
     } finally {
       if (transformParent) {
@@ -319,11 +330,96 @@ export const WarrantyCardView: React.FC<WarrantyCardViewProps> = ({
         </html>
       `);
       printWindow.document.close();
+      if (selectedOrder) void markPrinted([selectedOrder.id], true);
     } catch (err) {
       console.error('Print generation failed:', err);
       setNotice('Could not prepare the card for printing. Try again.');
     } finally {
       setIsExporting(false);
+    }
+  };
+
+  // Print every ticked card together: one picture per card, one card per page
+  const cardPropsFor = (o: Order) => {
+    const pDate = o.date ? formatDateToDDMMYYYY(o.date) : '';
+    const end = o.warrantyEnd ? formatDateToDDMMYYYY(o.warrantyEnd) : calculateOneYearEndDate(pDate);
+    return { customerName: o.customer.name || '', purchaseDate: pDate, warrantyPeriod: end, productName: cardProductName(o.item?.productName), orderId: o.id };
+  };
+  // Draw each ticked card in turn and return one picture per card
+  const renderCards = async (list: Order[]): Promise<string[]> => {
+    const { captureCanvas } = await import('../../utils/captureImage');
+    const urls: string[] = [];
+    for (let i = 0; i < list.length; i++) {
+      setBatchOrder(list[i]);
+      await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+      await new Promise((r) => setTimeout(r, i === 0 ? 350 : 120));
+      if (!batchRef.current) throw new Error('card not ready');
+      urls.push((await captureCanvas(batchRef.current, 3)).toDataURL('image/png'));
+      setBatch({ done: i + 1, total: list.length });
+    }
+    return urls;
+  };
+  const pickedList = () => orders.filter((o) => picked.has(o.id));
+  const tooMany = (n: number) => { if (n > 100) { setNotice('Do up to 100 cards at a time. Untick some and try again.'); return true; } return false; };
+  const printSelected = async () => {
+    const list = pickedList();
+    if (list.length === 0 || tooMany(list.length)) return;
+    const win = window.open('', '_blank');
+    if (!win) { setNotice('Your browser blocked the print window. Allow pop-ups for this site, then press Print again.'); return; }
+    win.document.write('<p style="font-family:sans-serif;padding:24px">Preparing the cards…</p>');
+    setIsExporting(true); setNotice(''); setOkNote(''); setBatch({ done: 0, total: list.length });
+    try {
+      const urls = await renderCards(list);
+      const dim = CARD_DIMENSIONS[cardSize] || CARD_DIMENSIONS.thermal;
+      win.document.open();
+      win.document.write(`<!DOCTYPE html><html><head><title>ZAYLOW Warranty Cards (${urls.length})</title><style>
+        @page { size: ${dim.widthMm}mm ${dim.heightMm}mm portrait; margin: 0; }
+        html, body { margin: 0; padding: 0; background: #fff; }
+        img { display: block; width: ${dim.widthMm}mm; height: ${dim.heightMm}mm; object-fit: contain; page-break-after: always; break-after: page; }
+        img:last-child { page-break-after: auto; break-after: auto; }
+      </style></head><body>${urls.map((u) => `<img src="${u}" />`).join('')}<script>
+        window.onload = function () { setTimeout(function () { window.print(); }, 400); };
+      </script></body></html>`);
+      win.document.close();
+      await markPrinted(list.map((o) => o.id), true);
+      setOkNote(`${list.length} warranty card${list.length === 1 ? '' : 's'} sent to print and marked Printed.`);
+      setPicked(new Set());
+    } catch (err) {
+      console.error('Batch print failed:', err);
+      try { win.close(); } catch { /* ignore */ }
+      setNotice('Could not prepare the cards for printing. Try again with fewer cards.');
+    } finally {
+      setBatchOrder(null); setBatch(null); setIsExporting(false);
+    }
+  };
+  const safeName = (o: Order) => (o.customer.name || 'customer').replace(/[^A-Za-z0-9]+/g, '_').replace(/^_|_$/g, '') + '-' + o.id.replace(/[^A-Za-z0-9]+/g, '');
+  // Download the ticked cards: one PNG each, or all in one PDF (one card per page)
+  const downloadSelected = async (as: 'png' | 'pdf') => {
+    const list = pickedList();
+    if (list.length === 0 || tooMany(list.length)) return;
+    setIsExporting(true); setNotice(''); setOkNote(''); setBatch({ done: 0, total: list.length });
+    try {
+      const urls = await renderCards(list);
+      if (as === 'pdf') {
+        const dim = CARD_DIMENSIONS[cardSize] || CARD_DIMENSIONS.thermal;
+        const pdf = new jsPDF({ orientation: 'portrait', unit: 'mm', format: [dim.widthMm, dim.heightMm] });
+        urls.forEach((u, i) => { if (i > 0) pdf.addPage([dim.widthMm, dim.heightMm], 'portrait'); pdf.addImage(u, 'PNG', 0, 0, dim.widthMm, dim.heightMm); });
+        pdf.save(`ZAYLOW-WarrantyCards-${list.length}.pdf`);
+      } else {
+        for (let i = 0; i < urls.length; i++) {
+          const a = document.createElement('a');
+          a.download = `ZAYLOW-WarrantyCard-${safeName(list[i])}.png`;
+          a.href = urls[i];
+          document.body.appendChild(a); a.click(); a.remove();
+          await new Promise((r) => setTimeout(r, 350));
+        }
+      }
+      setOkNote(`${list.length} warranty card${list.length === 1 ? '' : 's'} downloaded${as === 'pdf' ? ' as one PDF' : ' as separate PNG files'}. They are still marked Pending until you print them or tap Mark as printed.`);
+    } catch (err) {
+      console.error('Batch download failed:', err);
+      setNotice('Could not make the downloads. Try again with fewer cards.');
+    } finally {
+      setBatchOrder(null); setBatch(null); setIsExporting(false);
     }
   };
 
@@ -418,6 +514,7 @@ export const WarrantyCardView: React.FC<WarrantyCardViewProps> = ({
         </div>
       </header>
 
+      {okNote && <p role="status" className="text-sm font-medium rounded-2xl px-4 py-3 flex items-center gap-2" style={{ background: 'color-mix(in srgb, var(--lime) 16%, transparent)' }}><Check className="w-4 h-4 k-lime-text" />{okNote}</p>}
       {notice && <p role="alert" className="text-sm font-medium rounded-2xl px-4 py-3" style={{ background: 'color-mix(in srgb, var(--bad) 12%, transparent)' }}>{notice}</p>}
 
       {/* Phone: three tabs, one step on screen at a time */}
@@ -442,25 +539,69 @@ export const WarrantyCardView: React.FC<WarrantyCardViewProps> = ({
               <input value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} placeholder="Name, phone or order ID" aria-label="Search customers" className="k-field" style={{ paddingLeft: '2.4rem' }} />
             </div>
             <div className="flex items-center justify-between gap-3 text-sm">
-              <span className="font-medium">Only 1-year warranty orders</span>
-              <Switch on={onlyOneYearFilter} onChange={setOnlyOneYearFilter} label="Only 1-year warranty orders" />
+              <span className="font-medium">Only Premium (1-year warranty) orders</span>
+              <Switch on={onlyOneYearFilter} onChange={setOnlyOneYearFilter} label="Only Premium (1-year warranty) orders" />
             </div>
+            <div className="flex gap-1.5 flex-wrap" role="group" aria-label="Show cards">
+              {([['pending', 'Pending'], ['printed', 'Printed'], ['all', 'All']] as const).map(([k, l]) => (
+                <button key={k} type="button" className="k-chip" aria-pressed={stateFilter === k} onClick={() => { setStateFilter(k); setProductFilter('all'); setPicked(new Set()); }}>{l} <span className="opacity-70">{counts[k]}</span></button>
+              ))}
+            </div>
+            {productGroups.length > 1 && (
+              <div className="flex gap-1.5 flex-wrap" role="group" aria-label="Show product">
+                <button type="button" className="k-chip" aria-pressed={productFilter === 'all'} onClick={() => { setProductFilter('all'); setPicked(new Set()); }}>All products <span className="opacity-70">{stateOrders.length}</span></button>
+                {productGroups.map(([n, c]) => (
+                  <button key={n} type="button" className="k-chip" aria-pressed={productFilter === n} onClick={() => { setProductFilter(n); setPicked(new Set()); }}>{n.replace('Period Cramps Relief Massager', 'Massager').trim() || n} <span className="opacity-70">{c}</span></button>
+                ))}
+              </div>
+            )}
+            <div className="flex items-center justify-between gap-2">
+              <button type="button" onClick={() => setPicked(picked.size === filteredOrders.length && filteredOrders.length > 0 ? new Set() : new Set(filteredOrders.slice(0, 100).map((o) => o.id)))} className="flex items-center gap-2 text-sm font-semibold" aria-label="Select all shown">
+                {filteredOrders.length > 0 && picked.size >= Math.min(filteredOrders.length, 100) ? <CheckSquare className="w-5 h-5 k-lime-text" /> : <Square className="w-5 h-5 k-muted" />} Select all shown
+              </button>
+              <span className="text-xs k-muted tabular-nums">{picked.size} selected</span>
+            </div>
+            {picked.size === 0 && stateFilter === 'pending' && filteredOrders.length > 1 && (
+              <p className="text-xs k-muted">Printed most of these before? Tick the ones you still need, then tap "Mark the others as printed".</p>
+            )}
+            {picked.size > 0 && (
+              <div className="grid grid-cols-2 gap-2">
+                <button type="button" onClick={() => void printSelected()} disabled={isExporting} className="k-btn k-btn-lime py-2.5 text-sm col-span-2">{batch ? <><Loader2 className="w-4 h-4 animate-spin" /> Preparing {batch.done} of {batch.total}…</> : <><Printer className="w-4 h-4" /> Print {picked.size} selected</>}</button>
+                <button type="button" onClick={() => void downloadSelected('png')} disabled={isExporting} className="k-btn k-btn-soft py-2 text-xs"><Download className="w-4 h-4" /> Download {picked.size} PNG</button>
+                <button type="button" onClick={() => void downloadSelected('pdf')} disabled={isExporting} className="k-btn k-btn-soft py-2 text-xs"><FileDown className="w-4 h-4" /> Download 1 PDF</button>
+                <button type="button" onClick={() => { void markPrinted([...picked], true); setPicked(new Set()); }} disabled={isExporting} className="k-btn k-btn-soft py-2 text-xs">Mark as printed</button>
+                {stateFilter === 'pending' && filteredOrders.length > picked.size && (
+                  <button type="button" disabled={isExporting} className="k-btn k-btn-soft py-2 text-xs col-span-2" onClick={() => {
+                    const rest = filteredOrders.filter((o) => !picked.has(o.id)).map((o) => o.id);
+                    if (!window.confirm(`Mark the other ${rest.length} pending cards as already printed? The ${picked.size} ticked cards stay pending.`)) return;
+                    void markPrinted(rest, true).then(() => setOkNote(`${rest.length} cards marked as printed. ${picked.size} still pending.`));
+                  }}>Mark the other {filteredOrders.length - picked.size} as already printed</button>
+                )}
+                <button type="button" onClick={() => { void markPrinted([...picked], false); setPicked(new Set()); }} disabled={isExporting} className="k-btn k-btn-soft py-2 text-xs">Mark as not printed</button>
+              </div>
+            )}
           </div>
-          <ul className="max-h-[26rem] md:max-h-[calc(100vh-22rem)] overflow-y-auto border-t k-rule">
+          <ul className="max-h-[26rem] md:max-h-[calc(100vh-30rem)] overflow-y-auto border-t k-rule">
             {filteredOrders.length === 0 ? (
-              <li className="py-10 px-5 text-center text-sm k-muted">No order matches that search.</li>
+              <li className="py-10 px-5 text-center text-sm k-muted">{stateFilter === 'pending' && counts.all > 0 ? 'Every card here is printed.' : stateFilter === 'printed' ? 'No card is marked printed yet.' : 'No order matches that search.'}</li>
             ) : filteredOrders.map((order) => {
               const on = selectedOrder?.id === order.id;
+              const done = printedAt(order);
+              const isPicked = picked.has(order.id);
               return (
-                <li key={order.id} className="border-t k-rule first:border-t-0">
-                  <button onClick={() => pick(order)} aria-pressed={on} className="k-row w-full text-left px-4 py-3 flex items-center gap-3" style={on ? { background: 'var(--card2)', boxShadow: 'inset 3px 0 0 var(--lime)' } : undefined}>
+                <li key={order.id} className="border-t k-rule first:border-t-0 flex items-stretch" style={on ? { background: 'var(--card2)', boxShadow: 'inset 3px 0 0 var(--lime)' } : undefined}>
+                  <button type="button" onClick={() => setPicked((p) => { const n = new Set(p); if (n.has(order.id)) n.delete(order.id); else n.add(order.id); return n; })} aria-pressed={isPicked} aria-label={`Select ${order.customer.name}`} className="pl-4 pr-2 flex items-center shrink-0">
+                    {isPicked ? <CheckSquare className="w-5 h-5 k-lime-text" /> : <Square className="w-5 h-5 k-muted" />}
+                  </button>
+                  <button onClick={() => pick(order)} aria-pressed={on} className="k-row flex-1 min-w-0 text-left pr-4 py-3 flex items-center gap-3">
                     <span className="min-w-0 flex-1">
                       <span className="flex items-center gap-1.5 font-semibold truncate">{order.customer.name}{on && <Check className="w-3.5 h-3.5 k-lime-text shrink-0" />}</span>
                       <span className="block text-xs k-muted truncate">{order.customer?.city || order.item?.productName || 'Massager'}</span>
+                      <span className="block text-xs font-semibold truncate">{order.date ? `Ordered ${formatDateToDDMMYYYY(order.date)}` : 'No order date'}{/premium/i.test(order.item?.productName || '') ? ' · Premium' : ''}</span>
                     </span>
                     <span className="text-right shrink-0">
                       <span className="block text-xs font-mono font-semibold">{order.id.replace('ZYL-', '#')}</span>
-                      <span className="block text-xs k-muted">{new Date(order.createdAt).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })}</span>
+                      <span className="inline-block mt-0.5 rounded-full px-2 py-0.5 text-[10px] font-bold" style={done ? { background: 'var(--lime)', color: 'var(--on-lime)' } : { background: 'var(--card2)', color: 'var(--ink)' }}>{done ? `Printed ${new Date(done + 'T12:00:00').toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })}` : 'Pending'}</span>
                     </span>
                   </button>
                 </li>
@@ -539,6 +680,13 @@ export const WarrantyCardView: React.FC<WarrantyCardViewProps> = ({
           <p className="text-xs k-muted">{dim.widthMm} × {dim.heightMm} mm. Prints upright, edge to edge, on the 4 × 6 inch thermal printer.</p>
         </section>
       </div>
+
+      {/* off-screen copy of each card while many are printed together */}
+      {batchOrder && (
+        <div aria-hidden="true" style={{ position: 'fixed', left: -10000, top: 0, pointerEvents: 'none' }}>
+          <WarrantyCard innerRef={batchRef} {...cardPropsFor(batchOrder)} size={cardSize} productImage={productImage} />
+        </div>
+      )}
 
       {/* Phone: print bar stays above the tab bar */}
       <div className="md:hidden fixed left-3 right-3 z-30 flex gap-2 p-2 rounded-3xl k-card" style={{ bottom: 'calc(5.25rem + env(safe-area-inset-bottom))', boxShadow: '0 10px 30px -10px rgba(0,0,0,.35)' }}>

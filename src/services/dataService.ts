@@ -55,6 +55,7 @@ export class DataService {
       const quantityMatch = remarks.match(/QTY:(\d+)/);
       const advanceMatch = remarks.match(/ADV:(\d+)/);
       const deliveredMatch = remarks.match(/DLV:(\d{4}-\d{2}-\d{2})/);
+      const cardPrintedMatch = remarks.match(/WCP:(\d{4}-\d{2}-\d{2})/);
       const cartonMatch = remarks.match(/CTN:([^\s]+)/);
       const productMatch = remarks.match(/PRD:([^\s]+)/);
       const districtMatch = remarks.match(/DST:([^|]+)/);
@@ -87,6 +88,7 @@ export class DataService {
         codAmount: row.cod_amount || 0,
         advancePaid: advanceMatch ? parseInt(advanceMatch[1], 10) : 0,
         deliveredAt: deliveredMatch ? deliveredMatch[1] : undefined,
+        cardPrintedAt: cardPrintedMatch ? cardPrintedMatch[1] : undefined,
         status: row.status as OrderStatus,
         courier: (row.courier as any) || 'Custom',
         trackingNumber: row.tracking_id || undefined,
@@ -842,6 +844,27 @@ export class DataService {
       out.push(...(data || []));
     }
     return out;
+  }
+
+  /** Marks warranty cards as printed (or not printed). The day is saved in each order's remarks as WCP:date. */
+  static async setCardPrinted(ids: string[], printed: boolean): Promise<boolean> {
+    const day = new Date().toISOString().slice(0, 10);
+    let ok = true;
+    for (let i = 0; i < ids.length; i += 50) {
+      const chunk = ids.slice(i, i + 50);
+      const { data: rows, error } = await anySupabase.from('orders').select('id, remarks').in('inventory_id', chunk);
+      if (error) { console.error('Could not read orders to mark cards:', error); return false; }
+      const jobs = (rows || []).map((row: any) => {
+        const base = String(row.remarks || '').replace(/\s*\|\s*WCP:\d{4}-\d{2}-\d{2}/g, '').replace(/\s*WCP:\d{4}-\d{2}-\d{2}/g, '').trim();
+        const remarks = printed ? `${base} | WCP:${day}`.trim() : base;
+        return anySupabase.from('orders').update({ remarks }).eq('id', row.id);
+      });
+      for (let j = 0; j < jobs.length; j += 10) {
+        const results = await Promise.all(jobs.slice(j, j + 10));
+        if (results.some((r: any) => r?.error)) ok = false;
+      }
+    }
+    return ok;
   }
 
   static async getCartons(): Promise<any[]> {

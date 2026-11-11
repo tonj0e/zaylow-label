@@ -30,20 +30,14 @@ export const ThermalLabel: React.FC<ThermalLabelProps> = ({
   // Determine if this is a small label (< 60mm wide or < 80mm tall)
   const isSmall = labelSize.widthMm < 70 || labelSize.heightMm < 80;
 
-  // The "From" block comes from Settings > Warehouse address, for COD and Prepaid alike.
-  // Only if that address was left empty do we fall back to the original built-in sender.
+  // The "From" block prints exactly what is saved in Settings > Sender address. Nothing is filled in from an old sender.
   const wh = settings.warehouse;
-  const hasAddress = !!wh?.addressLine?.trim();
-  const fromAddress = hasAddress
-    ? {
-        name: (wh.contactPerson?.trim() || wh.companyName?.trim() || settings.companyName || '').toUpperCase(),
-        address: [wh.addressLine, wh.city, wh.state].map((x) => x?.trim()).filter(Boolean).join(', ').toUpperCase(),
-        pin: wh.pinCode?.trim() || '',
-        phone: wh.phone?.trim() || '',
-      }
-    : isCod
-      ? { name: 'JOSHWA M JOLLY', address: 'MUNDACKAL (H) VALAMANGALAM NORTH THURAVOOR PO CHERTHALA', pin: '688532', phone: '6282010344' }
-      : { name: 'ZAYLOW', address: 'GOLD MAREN SEE FOODS THURAVOOR PO CHERTHALA', pin: '688532', phone: '6282010344' };
+  const fromAddress = {
+    name: (wh?.contactPerson?.trim() || wh?.companyName?.trim() || settings.companyName || '').toUpperCase(),
+    address: [wh?.addressLine, wh?.city, wh?.state].map((x) => x?.trim()).filter(Boolean).join(', ').toUpperCase(),
+    pin: wh?.pinCode?.trim() || '',
+    phone: wh?.phone?.trim() || '',
+  };
 
   // QR Code Payload contains essential tracking info
   const qrPayload = JSON.stringify({

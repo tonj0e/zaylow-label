@@ -99,7 +99,11 @@ export class StorageService {
       if (!stored.logoUrl || stored.logoUrl.includes('unsplash.com')) {
         stored.logoUrl = INITIAL_SETTINGS.logoUrl;
       }
-      return { ...INITIAL_SETTINGS, ...stored };
+      // the starter demo sender (Udyog Vihar, Gurugram) must never print on a real label: blank any field that still holds it
+      const DEMO: Record<string, string> = { companyName: 'ZAYLOW Fulfillment Hub 01', contactPerson: 'Zaylow Logistics Desk', phone: '+91 98765 43210', addressLine: 'Plot 42, Phase 3, Udyog Vihar, Sector 19', city: 'Gurugram', state: 'Haryana', pinCode: '122016', gstin: '07AAAAA0000A1Z5' };
+      const wh = { ...INITIAL_SETTINGS.warehouse, ...(stored.warehouse || {}) } as unknown as Record<string, string>;
+      Object.keys(DEMO).forEach((k) => { if ((wh[k] || '').trim() === DEMO[k]) wh[k] = k === 'companyName' ? 'ZAYLOW' : ''; });
+      return { ...INITIAL_SETTINGS, ...stored, warehouse: wh as unknown as CompanySettings['warehouse'] };
     } catch {
       return INITIAL_SETTINGS;
     }

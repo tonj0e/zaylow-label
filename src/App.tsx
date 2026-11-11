@@ -175,13 +175,8 @@ export function App() {
           for (const order of bulkPrintOrders) {
             const el = document.getElementById(`bulk-print-label-${order.id}`);
             if (el) {
-              const { default: html2canvas } = await import('html2canvas');
-              const canvas = await html2canvas(el, {
-                scale: 3,
-                useCORS: true,
-                backgroundColor: '#ffffff',
-                logging: false,
-              });
+              const { captureCanvas } = await import('./utils/captureImage');
+              const canvas = await captureCanvas(el, 3);
               dataUrls.push(canvas.toDataURL('image/png'));
             }
           }
@@ -537,6 +532,7 @@ export function App() {
             <WarrantyCardView
               orders={orders}
               initialOrder={selectedOrderForWarrantyCard}
+              onOrdersChanged={async () => { setOrders(await DataService.getOrders()); }}
             />
           )}
           {activeTab === 'claims' && !ordersLoaded && <PageSkeleton title="Claims" />}
