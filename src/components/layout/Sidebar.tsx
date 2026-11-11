@@ -5,6 +5,8 @@ import {
   Printer,
   UploadCloud,
   Settings,
+  Plug,
+  Map as MapIcon,
   Zap,
   Tag,
   PlusSquare,
@@ -45,7 +47,9 @@ export type ActiveTab =
   | 'cartons'
   | 'products'
   | 'warranty-cards'
-  | 'tracking';
+  | 'tracking'
+  | 'erp'
+  | 'shipping-map';
 
 interface SidebarProps {
   activeTab: ActiveTab;
@@ -102,6 +106,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
         { tab: 'bulk', label: 'Bulk import', icon: UploadCloud },
         { tab: 'printQueue', label: 'Print queue', icon: Printer, badge: queueCount },
         { tab: 'tracking', label: 'Tracking and COD', icon: Truck },
+        { tab: 'shipping-map', label: 'Shipping map', icon: MapIcon },
       ],
     },
     ...(ENABLE_MULTI_WAREHOUSE
@@ -125,7 +130,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
         { tab: 'claims', label: 'Claims', icon: FileText },
       ],
     },
-    { title: 'Config', items: [{ tab: 'settings', label: 'Settings', icon: Settings }] },
+    { title: 'Config', items: [{ tab: 'erp', label: 'ERP connection', icon: Plug }, { tab: 'settings', label: 'Settings', icon: Settings }] },
   ];
 
   const navButton = (item: Item) => {
@@ -141,10 +146,12 @@ export const Sidebar: React.FC<SidebarProps> = ({
           go(item.tab);
         }}
         aria-current={active ? 'page' : undefined}
-        className={`relative w-full h-11 flex items-center rounded-2xl text-sm font-semibold transition-colors ${active ? 'k-btn-lime' : 'hover:bg-[var(--card2)]'}`}
+        aria-label={item.label}
+        title={item.label}
+        className={`rail-btn relative w-full h-11 flex items-center rounded-2xl text-sm font-semibold transition-colors ${active ? 'k-btn-lime' : 'hover:bg-[var(--card2)]'}`}
         style={active ? undefined : { color: 'var(--muted)' }}
       >
-        <span className="w-11 h-11 flex items-center justify-center shrink-0 relative">
+        <span className="rail-icon w-11 h-11 flex items-center justify-center shrink-0 relative">
           <Icon className="w-[18px] h-[18px]" />
           {!!item.badge && (
             <span className="rail-dot absolute top-1.5 right-1.5 w-2 h-2 rounded-full" style={{ background: active ? 'var(--on-lime)' : 'var(--lime)' }} />
@@ -177,7 +184,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
       {navButton({ tab: 'dashboard', label: 'Dashboard', icon: LayoutDashboard })}
 
       {groups.map((g) => (
-        <div key={g.title} className="mt-3 space-y-0.5">
+        <div key={g.title} className="rail-group mt-3 space-y-0.5">
           <div className="h-5 flex items-center px-3">
             <span className="rail-fade text-[11px] font-semibold whitespace-nowrap" style={{ color: 'var(--muted)' }}>{g.title}</span>
             <span className="rail-tick absolute left-[26px] w-3 border-t k-rule" aria-hidden />

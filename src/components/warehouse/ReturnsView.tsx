@@ -1,11 +1,10 @@
-import React, { useState, useEffect, useRef } from 'react';
-import {
-  Undo2, CheckCircle, XCircle, Loader2, AlertTriangle, Search,
-  Package, User, Tag, RefreshCw, ScanLine
-} from 'lucide-react';
+import React, { useCallback, useMemo, useState } from 'react';
+import { Camera, Check, ChevronLeft, ChevronRight, Loader2, PackageCheck, RefreshCw, Search, Undo2, X } from 'lucide-react';
 import { ScannerDisplay } from './ScannerDisplay';
 import { DataService } from '../../services/dataService';
 import { supabase } from '../../services/supabase';
+import { useCached } from '../../hooks/useCached';
+import { CACHE } from '../../services/prefetch';
 
 type ReturnItem = {
   id: number;
@@ -35,531 +34,344 @@ const RETURN_REASONS = [
   'Other',
 ];
 
+type Filter = 'all' | 'waiting' | 'restocked' | 'written-off';
+const FILTERS: { key: Filter; label: string; status: string }[] = [
+  { key: 'all', label: 'Everything', status: '' },
+  { key: 'waiting', label: 'Waiting for check', status: 'Pending Inspection' },
+  { key: 'restocked', label: 'Back in stock', status: 'Restocked' },
+  { key: 'written-off', label: 'Written off', status: 'Rejected' },
+];
+
+const weekLabel = (date = new Date()): string => {
+  const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
+  d.setUTCDate(d.getUTCDate() + 4 - (d.getUTCDay() || 7));
+  const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1));
+  const weekNo = Math.ceil(((Number(d) - Number(yearStart)) / 86400000 + 1) / 7);
+  return `${d.getUTCFullYear()}-W${String(weekNo).padStart(2, '0')}`;
+};
+
+const PAGE_SIZE = 5;
+
+/** 1 2 3 … 7: always the first and last page, plus the pages next to the current one. */
+const pageList = (current: number, last: number): (number | '…')[] => {
+  const keep = new Set([1, last, current - 1, current, current + 1].filter((n) => n >= 1 && n <= last));
+  const out: (number | '…')[] = [];
+  let prev = 0;
+  [...keep].sort((a, b) => a - b).forEach((n) => { if (n - prev > 1) out.push('…'); out.push(n); prev = n; });
+  return out;
+};
+
+const niceDay = (v: string) => new Date(v).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' });
+
+/** A QR may hold plain text or JSON like {"id":"ZYL-1"}. */
+const readScanned = (text: string): string => {
+  try { const p = JSON.parse(text); if (p && typeof p === 'object' && p.id) return String(p.id); } catch { /* plain text */ }
+  return text.trim();
+};
+
 export const ReturnsView = () => {
-  const [orderId, setOrderId] = useState('');
-  const [returnReason, setReturnReason] = useState(RETURN_REASONS[0]);
-  const [returnsList, setReturnsList] = useState<ReturnItem[]>([]);
-  const [status, setStatus] = useState<'idle' | 'loading' | 'success' | 'error'>('idle');
-  const [message, setMessage] = useState('');
-  const [foundOrder, setFoundOrder] = useState<any>(null);
-  const [isSearching, setIsSearching] = useState(false);
-  const [showScanner, setShowScanner] = useState(false);
-  const inputRef = useRef<HTMLInputElement>(null);
+  const returnsC = useCached<ReturnItem[]>(CACHE.returns.key, CACHE.returns.fetch);
+  const list = useMemo(() => returnsC.data ?? [], [returnsC.data]);
+  const loadingList = returnsC.loading;
+  const [filter, setFilter] = useState<Filter>('all');
+  const [query, setQuery] = useState('');
+  const [reason, setReason] = useState(RETURN_REASONS[0]);
+  const [found, setFound] = useState<any>(null);
+  const [searching, setSearching] = useState(false);
+  const [logging, setLogging] = useState(false);
+  const [camera, setCamera] = useState(false);
+  const [note, setNote] = useState<{ kind: 'error' | 'success'; text: string } | null>(null);
+  const [confirming, setConfirming] = useState<{ id: number; action: 'restock' | 'writeoff' } | null>(null);
+  const [working, setWorking] = useState(false);
+  const [page, setPage] = useState(1);
 
-  useEffect(() => {
-    loadReturns();
-  }, []);
+  const load = useCallback(async () => { try { await returnsC.refresh(); } catch (err) { console.error(err); } },
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  []);
 
-  const loadReturns = async () => {
-    const { data, error } = await anySupabase
-      .from('returns')
-      .select('*')
-      .order('created_at', { ascending: false });
-    if (!error && data) setReturnsList(data);
-  };
-
-  const getWeekLabel = (date = new Date()): string => {
-    const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
-    const dayNum = d.getUTCDay() || 7;
-    d.setUTCDate(d.getUTCDate() + 4 - dayNum);
-    const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1));
-    const weekNo = Math.ceil(((Number(d) - Number(yearStart)) / 86400000 + 1) / 7);
-    return `${d.getUTCFullYear()}-W${String(weekNo).padStart(2, '0')}`;
-  };
-
-  const handleSearch = async (scanValue?: string) => {
-    let raw = (typeof scanValue === 'string' ? scanValue : orderId).trim();
-    if (!raw) return;
-    
-    // Check if the scanned value is a JSON string (from shipping label QR)
-    try {
-      if (raw.startsWith('{') && raw.endsWith('}')) {
-        const parsed = JSON.parse(raw);
-        if (parsed && parsed.id) {
-          raw = parsed.id;
-          setOrderId(raw); // Update the input field to show just the ID
-        }
-      }
-    } catch {
-      // Not a valid JSON string, continue with the raw string
-    }
-
-    setIsSearching(true);
-    setFoundOrder(null);
-    setMessage('');
+  const search = useCallback(async (raw: string) => {
+    const value = readScanned(raw);
+    if (!value) return;
+    setSearching(true); setFound(null); setNote(null);
     try {
       const orders = await DataService.getOrders();
-
-      // Normalise the input — try multiple formats:
-      // "#406419" → strip # → "406419"
-      // "406419"  → also try "ZYL-406419"
-      // "ZYL-406419" → exact match
-      const stripped = raw.replace(/^#/, '');                   // remove leading #
-      const withPrefix = stripped.startsWith('ZYL-') ? stripped : `ZYL-${stripped}`;
-
-      const order = orders.find(o =>
-        o.id === raw ||                  // exact match (ZYL-406419)
-        o.id === stripped ||             // without # (406419)
-        o.id === withPrefix ||           // auto-prefix (ZYL-406419)
-        o.trackingNumber === raw ||      // tracking number exact
-        o.trackingNumber === stripped || // tracking number stripped
-        o.id.replace('ZYL-', '') === stripped  // numeric-only part match
-      );
-
-      if (!order) {
-        setMessage(`No order found for "${raw}". Make sure you enter the Order ID from the label (e.g. ZYL-406419 or #406419).`);
-        setStatus('error');
-      } else if (order.status === 'Returned' || order.status === 'Claims') {
-        setMessage('This order has already been returned or claimed.');
-        setStatus('error');
-      } else {
-        setFoundOrder(order);
-        setStatus('idle');
-        setMessage('');
-      }
+      const q = value.replace(/^#/, '').replace(/\s+/g, '').toLowerCase();
+      const withPrefix = q.startsWith('zyl-') ? q : `zyl-${q}`;
+      const order = orders.find((o) => {
+        const id = (o.id || '').toLowerCase();
+        return id === q || id === withPrefix || id.replace(/^zyl-/, '') === q || (o.trackingNumber || '').replace(/\s+/g, '').toLowerCase() === q;
+      });
+      if (!order) setNote({ kind: 'error', text: `No order matches "${value}". Use the order ID from the label, like ZYL-406419, or the tracking number.` });
+      else if (order.status === 'Returned' || order.status === 'Claims') setNote({ kind: 'error', text: `${order.id} is already in returns or claims.` });
+      else setFound(order);
     } catch {
-      setMessage('Error looking up order. Please try again.');
-      setStatus('error');
+      setNote({ kind: 'error', text: 'Could not load orders. Check your connection and try again.' });
     } finally {
-      setIsSearching(false);
+      setSearching(false);
     }
-  };
+  }, []);
 
-  const handleKeyPress = (e: React.KeyboardEvent) => {
-    if (e.key === 'Enter') handleSearch();
-  };
+  const onScan = useCallback((text: string) => {
+    const v = readScanned(text);
+    setQuery(v); setCamera(false);
+    void search(v);
+  }, [search]);
 
-  const handleLogReturn = async () => {
-    if (!foundOrder) return;
-    setStatus('loading');
-    setMessage('Logging return...');
+  const logReturn = async () => {
+    if (!found) return;
+    setLogging(true); setNote(null);
     try {
       const now = new Date();
       const { error } = await anySupabase.from('returns').insert({
-        order_id: foundOrder.id,
-        customer: foundOrder.customer.name,
-        mobile: foundOrder.customer.phone,
-        product: foundOrder.item.productName,
-        product_id: foundOrder.item.sku,
-        return_reason: returnReason,
-        courier: foundOrder.courier,
-        tracking_id: foundOrder.trackingNumber || '',
+        order_id: found.id,
+        customer: found.customer.name,
+        mobile: found.customer.phone,
+        product: found.item.productName,
+        product_id: found.item.sku,
+        return_reason: reason,
+        courier: found.courier,
+        tracking_id: found.trackingNumber || '',
         status: 'Pending Inspection',
         date_received: now.toISOString().split('T')[0],
-        week_label: getWeekLabel(now),
+        week_label: weekLabel(now),
       });
-
       if (error) throw error;
-
-      // Update order status to Claims
-      await DataService.updateOrderStatus(foundOrder.id, 'Claims');
-
-      setStatus('success');
-      setMessage(`Return logged for ${foundOrder.customer.name}'s order (${foundOrder.id}). Awaiting inspection.`);
-      setOrderId('');
-      setFoundOrder(null);
-      await loadReturns();
-
-      setTimeout(() => { setStatus('idle'); setMessage(''); }, 4000);
+      await DataService.updateOrderStatus(found.id, 'Claims');
+      setNote({ kind: 'success', text: `Return saved for ${found.customer.name} (${found.id}). It is waiting for a check.` });
+      setQuery(''); setFound(null); setFilter('waiting');
+      await load();
     } catch (err: any) {
-      console.error('Error logging return:', err);
-      setStatus('error');
-      setMessage('Failed to log return: ' + (err.message || 'Unknown error'));
+      setNote({ kind: 'error', text: `Could not save the return. ${err?.message || ''}`.trim() });
+    } finally {
+      setLogging(false);
     }
   };
 
-  const handleApproveReturn = async (ret: ReturnItem) => {
-    if (!window.confirm('Approve this return and restock the product into inventory?')) return;
+  const decide = async (ret: ReturnItem, action: 'restock' | 'writeoff') => {
+    setWorking(true); setNote(null);
     try {
-      // Release the individual scanned QR product units back into stock
-      await DataService.releaseProductsForOrder(ret.order_id, 'In Stock');
-
-      // Update order status to 'Returned' in orders table
+      await DataService.releaseProductsForOrder(ret.order_id, action === 'restock' ? 'In Stock' : 'Damaged');
       await DataService.updateOrderStatus(ret.order_id, 'Returned');
-
-      // Update return status
-      const { error } = await anySupabase
-        .from('returns')
-        .update({ status: 'Restocked' })
-        .eq('id', ret.id);
+      const { error } = await anySupabase.from('returns').update({ status: action === 'restock' ? 'Restocked' : 'Rejected' }).eq('id', ret.id);
       if (error) throw error;
-
-      await loadReturns();
+      setConfirming(null);
+      await load();
     } catch (err: any) {
-      alert('Failed to approve return: ' + (err.message || 'Unknown error'));
+      setNote({ kind: 'error', text: `Could not update ${ret.order_id}. ${err?.message || ''}`.trim() });
+    } finally {
+      setWorking(false);
     }
   };
 
-  const handleRejectReturn = async (ret: ReturnItem) => {
-    if (!window.confirm('Reject this return? The item will be marked as damaged/lost (not restocked).')) return;
-    try {
-      // Mark the individual scanned QR product units as Damaged (valid DB constraint status)
-      await DataService.releaseProductsForOrder(ret.order_id, 'Damaged');
+  const counts = useMemo(() => {
+    const c: Record<Filter, number> = { all: list.length, waiting: 0, restocked: 0, 'written-off': 0 };
+    list.forEach((r) => { const f = FILTERS.find((x) => x.status && x.status === r.status); if (f) c[f.key] += 1; });
+    return c;
+  }, [list]);
 
-      // Update order status to 'Returned' in orders table
-      await DataService.updateOrderStatus(ret.order_id, 'Returned');
-
-      const { error } = await anySupabase
-        .from('returns')
-        .update({ status: 'Rejected' })
-        .eq('id', ret.id);
-      if (error) throw error;
-
-      await loadReturns();
-    } catch (err: any) {
-      alert('Failed to reject return: ' + (err.message || 'Unknown error'));
+  const shown = useMemo(() => {
+    if (filter === 'all') {
+      // waiting parcels first: they are the ones that need a decision
+      return [...list].sort((a, b) => Number(b.status === 'Pending Inspection') - Number(a.status === 'Pending Inspection'));
     }
-  };
+    const status = FILTERS.find((f) => f.key === filter)!.status;
+    return list.filter((r) => r.status === status);
+  }, [list, filter]);
 
-  const pendingCount = returnsList.filter(r => r.status === 'Pending Inspection').length;
+  const lastPage = Math.max(1, Math.ceil(shown.length / PAGE_SIZE));
+  const current = Math.min(page, lastPage);
+  const pageRows = shown.slice((current - 1) * PAGE_SIZE, current * PAGE_SIZE);
+
+  const reasons = useMemo(() => {
+    const m = new Map<string, number>();
+    list.forEach((r) => m.set(r.return_reason, (m.get(r.return_reason) || 0) + 1));
+    return [...m.entries()].sort((a, b) => b[1] - a[1]);
+  }, [list]);
+
+  const week = useMemo(() => {
+    const cutoff = Date.now() - 7 * 86400000;
+    return list.filter((r) => new Date(r.date_received).getTime() >= cutoff).length;
+  }, [list]);
+
+  const decided = counts.restocked + counts['written-off'];
+  const restockRate = decided > 0 ? Math.round((counts.restocked / decided) * 100) : null;
 
   return (
-    <div className="p-4 md:p-6 space-y-4 md:space-y-6 select-none max-w-6xl mx-auto pb-24 md:pb-6">
-
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-xl bg-amber-500/20 flex items-center justify-center">
-            <Undo2 className="w-5 h-5 text-amber-400" />
-          </div>
-          <div>
-            <h2 className="text-2xl font-black text-black dark:text-white tracking-tight">Returns Management</h2>
-            <p className="text-xs text-black dark:text-white">Log customer returns and manage restocking.</p>
-          </div>
+    <div className="p-4 md:p-6 space-y-6 max-w-7xl mx-auto pb-24 md:pb-6">
+      <header className="flex items-start justify-between gap-4">
+        <div>
+          <h2 className="text-2xl font-bold k-display">Returns</h2>
+          <p className="text-sm k-muted mt-1">Log a parcel that came back, check it, then put it back in stock or write it off.</p>
         </div>
-        <div className="flex items-center gap-3">
-          {pendingCount > 0 && (
-            <span className="px-3 py-1 rounded-full bg-amber-500/20 text-amber-400 text-xs font-black border border-amber-500/30">
-              {pendingCount} Pending Inspection
-            </span>
-          )}
-          <button onClick={loadReturns} className="p-2 rounded-lg bg-slate-100 dark:bg-slate-800 text-black dark:text-white hover:text-black dark:text-white transition">
-            <RefreshCw className="w-4 h-4" />
-          </button>
-        </div>
-      </div>
+        <button onClick={() => void load()} aria-label="Refresh returns" className="k-btn k-btn-ghost w-10 h-10 shrink-0"><RefreshCw className="w-4 h-4" /></button>
+      </header>
 
-      {/* Main Grid */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+      {/* Intake: one wide panel, steps run left to right */}
+      <section className="k-card p-5 sm:p-6" aria-label="Log a return">
+        <form onSubmit={(e) => { e.preventDefault(); void search(query); }}>
+          <label htmlFor="return-search" className="k-label">Which parcel came back? Order ID or tracking number</label>
+          <div className="flex gap-2 flex-wrap sm:flex-nowrap">
+            <input id="return-search" value={query} onChange={(e) => { setQuery(e.target.value); setFound(null); if (note) setNote(null); }} placeholder="e.g. ZYL-406419 or CL431677163IN" autoComplete="off" className="k-field font-mono" />
+            <button type="button" onClick={() => setCamera((v) => !v)} aria-pressed={camera} className="k-btn k-btn-soft px-4 text-sm shrink-0">
+              {camera ? <X className="w-4 h-4" /> : <Camera className="w-4 h-4" />} {camera ? 'Close camera' : 'Scan'}
+            </button>
+            <button type="submit" disabled={!query.trim() || searching} className="k-btn k-btn-lime px-5 py-3 text-sm shrink-0">
+              {searching ? <Loader2 className="w-4 h-4 animate-spin" /> : <Search className="w-4 h-4" />} Find order
+            </button>
+          </div>
+        </form>
 
-        {/* ── LEFT: Log New Return Form ── */}
-        <div className="lg:col-span-1 space-y-4">
-          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-5 shadow-xl space-y-4">
-            <h3 className="text-sm font-bold text-black dark:text-white uppercase tracking-wider border-b border-slate-200 dark:border-slate-800 pb-3">
-              Log New Return
-            </h3>
+        {camera && <div className="mt-4"><ScannerDisplay label="order label" onScan={onScan} /></div>}
 
-            {/* Step 1: Search Order */}
-            <div className="space-y-2">
-              <label className="text-xs font-bold text-black dark:text-white uppercase tracking-wider block">
-                Step 1 — Enter Order ID or Tracking Number
-              </label>
-              <div className="flex gap-2">
-                <input
-                  ref={inputRef}
-                  type="text"
-                  value={orderId}
-                  onChange={e => { setOrderId(e.target.value); setFoundOrder(null); }}
-                  onKeyPress={handleKeyPress}
-                  placeholder="e.g. ZYL-123456 or TRK001..."
-                  className="flex-1 px-3 py-2.5 bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-700 rounded-xl text-black dark:text-white text-sm font-mono focus:outline-none focus:border-amber-500 focus:ring-1 focus:ring-amber-500/30 transition"
-                />
-                <button
-                  onClick={() => setShowScanner(!showScanner)}
-                  className={`px-3 py-2.5 rounded-xl text-slate-950 font-black text-xs transition flex items-center gap-1 ${
-                    showScanner ? 'bg-slate-200 dark:bg-slate-700 text-black dark:text-white' : 'bg-emerald-500 hover:bg-emerald-400'
-                  }`}
-                  title="Scan QR Code"
-                >
-                  <ScanLine className={`w-4 h-4 ${showScanner ? 'text-black dark:text-white' : 'text-slate-950'}`} />
-                </button>
-                <button
-                  onClick={() => handleSearch()}
-                  disabled={!orderId.trim() || isSearching}
-                  className="px-3 py-2.5 rounded-xl bg-amber-500 text-slate-950 font-black text-xs hover:bg-amber-400 transition disabled:opacity-40 flex items-center gap-1"
-                >
-                  {isSearching ? <Loader2 className="w-4 h-4 animate-spin" /> : <Search className="w-4 h-4" />}
-                </button>
-              </div>
+        {note && (
+          <p role={note.kind === 'error' ? 'alert' : 'status'} className="text-sm font-medium mt-4 flex items-start gap-2" style={note.kind === 'error' ? { color: 'var(--bad)' } : undefined}>
+            {note.kind === 'success' && <Check className="w-4 h-4 mt-0.5 shrink-0 k-lime-text" />}
+            {note.text}
+          </p>
+        )}
+
+        {found && (
+          <div className="mt-5 grid md:grid-cols-[1.2fr_1fr] gap-5 k-rise" style={{ ['--i' as string]: 0 }}>
+            <div className="k-card2 rounded-2xl p-4">
+              <p className="text-lg font-bold k-display">{found.customer.name}</p>
+              <p className="text-sm k-muted">{found.customer.phone}</p>
+              <dl className="mt-3 grid grid-cols-2 gap-x-4 gap-y-2 text-sm">
+                <div className="col-span-2"><dt className="text-xs k-muted">Product</dt><dd className="font-semibold">{found.item.productName}</dd></div>
+                <div><dt className="text-xs k-muted">Order</dt><dd className="font-mono font-semibold">{found.id}</dd></div>
+                <div><dt className="text-xs k-muted">Payment</dt><dd className="font-semibold">{found.paymentType}{found.paymentType === 'COD' ? ` ₹${found.codAmount}` : ''}</dd></div>
+              </dl>
             </div>
-            
-            {/* Scanner Modal */}
-            {showScanner && (
-              <div className="fixed inset-0 z-50 bg-slate-50 dark:bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4 overflow-y-auto">
-                <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl w-full max-w-md mx-4 p-6 shadow-2xl space-y-4 relative">
-                  <div className="flex items-center justify-between pb-3 border-b border-slate-200 dark:border-slate-800">
-                    <div>
-                      <h2 className="text-xl font-bold text-black dark:text-white">Scan Order QR</h2>
-                      <p className="text-xs text-slate-400 dark:text-slate-500 mt-0.5">Point your camera at the tracking or order label</p>
-                    </div>
-                    <button onClick={() => setShowScanner(false)} className="p-1 flex-shrink-0 rounded-lg text-slate-400 hover:text-black dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800 transition">
-                      <XCircle className="w-6 h-6" />
-                    </button>
-                  </div>
-                  
-                  <ScannerDisplay 
-                    label="order label" 
-                    onScan={(text) => {
-                      setOrderId(text);
-                      setShowScanner(false);
-                      handleSearch(text);
-                    }} 
-                  />
-                  
-                  <button onClick={() => setShowScanner(false)} className="w-full py-2.5 rounded-xl bg-slate-100 dark:bg-slate-800 text-black dark:text-white font-bold text-sm hover:bg-slate-200 dark:hover:bg-slate-700 transition">
-                    Cancel
-                  </button>
-                </div>
+            <div className="flex flex-col">
+              <p className="k-label">Why did it come back?</p>
+              <div className="flex flex-wrap gap-2" role="group" aria-label="Return reason">
+                {RETURN_REASONS.map((r) => (
+                  <button key={r} type="button" className="k-chip" aria-pressed={reason === r} onClick={() => setReason(r)}>{r}</button>
+                ))}
               </div>
-            )}
-
-            {/* Found Order Preview */}
-            {foundOrder && (
-              <div className="space-y-3">
-                <div className="p-3 bg-emerald-500/10 border border-emerald-500/30 rounded-xl space-y-2 text-xs">
-                  <p className="font-bold text-emerald-400 mb-1 flex items-center gap-1">
-                    <CheckCircle className="w-3.5 h-3.5" /> Order Found
-                  </p>
-                  <div className="flex items-center gap-2 text-black dark:text-white">
-                    <User className="w-3 h-3 text-black dark:text-white" />
-                    <span className="font-bold text-black dark:text-white">{foundOrder.customer.name}</span>
-                    <span className="text-slate-400 dark:text-slate-500">{foundOrder.customer.phone}</span>
-                  </div>
-                  <div className="flex items-center gap-2 text-black dark:text-white">
-                    <Package className="w-3 h-3 text-black dark:text-white" />
-                    <span>{foundOrder.item.productName}</span>
-                    <span className="ml-auto text-slate-400 dark:text-slate-500 font-mono">{foundOrder.id}</span>
-                  </div>
-                  <div className="flex items-center gap-2 text-black dark:text-white">
-                    <Tag className="w-3 h-3 text-black dark:text-white" />
-                    <span className={`font-bold ${foundOrder.paymentType === 'COD' ? 'text-amber-400' : 'text-emerald-400'}`}>
-                      {foundOrder.paymentType}{foundOrder.paymentType === 'COD' ? ` ₹${foundOrder.codAmount}` : ''}
-                    </span>
-                    <span className="text-slate-400 dark:text-slate-500">via {foundOrder.courier}</span>
-                  </div>
-                </div>
-
-                {/* Step 2: Return Reason */}
-                <div className="space-y-1">
-                  <label className="text-xs font-bold text-black dark:text-white uppercase tracking-wider block">
-                    Step 2 — Return Reason
-                  </label>
-                  <select
-                    value={returnReason}
-                    onChange={e => setReturnReason(e.target.value)}
-                    className="w-full px-3 py-2.5 bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-700 rounded-xl text-black dark:text-white text-sm focus:outline-none focus:border-amber-500 transition"
-                  >
-                    {RETURN_REASONS.map(r => (
-                      <option key={r} value={r}>{r}</option>
-                    ))}
-                  </select>
-                </div>
-
-                {/* Step 3: Confirm */}
-                <button
-                  onClick={handleLogReturn}
-                  disabled={status === 'loading'}
-                  className="w-full py-3 rounded-xl bg-amber-500 text-slate-950 font-black text-sm flex items-center justify-center gap-2 hover:bg-amber-400 transition shadow-lg shadow-amber-500/20 disabled:opacity-50"
-                >
-                  {status === 'loading' ? (
-                    <><Loader2 className="w-4 h-4 animate-spin" /><span>Logging Return...</span></>
-                  ) : (
-                    <><CheckCircle className="w-4 h-4" /><span>Confirm & Log Return</span></>
-                  )}
-                </button>
-              </div>
-            )}
-
-            {/* Status Message */}
-            {message && (
-              <div className={`p-3 rounded-xl text-xs font-medium flex items-start gap-2 ${
-                status === 'success'
-                  ? 'bg-emerald-500/15 border border-emerald-500/30 text-emerald-400'
-                  : status === 'error'
-                  ? 'bg-red-500/15 border border-red-500/30 text-red-400'
-                  : 'bg-blue-500/15 border border-blue-500/30 text-blue-400'
-              }`}>
-                {status === 'error' && <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" />}
-                {status === 'success' && <CheckCircle className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" />}
-                <span>{message}</span>
-              </div>
-            )}
+              <button onClick={() => void logReturn()} disabled={logging} className="k-btn k-btn-lime px-6 py-3 text-sm self-start" style={{ marginTop: "1rem" }}>
+                {logging ? <Loader2 className="w-4 h-4 animate-spin" /> : <Undo2 className="w-4 h-4" />} Save return
+              </button>
+            </div>
           </div>
+        )}
+      </section>
 
-          {/* Pipeline Info Card */}
-          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-5 space-y-3">
-            <h3 className="text-xs font-bold text-black dark:text-white uppercase tracking-wider">Return Pipeline</h3>
-            {[
-              { step: '1', label: 'Log Return', desc: 'Enter order ID & reason', color: 'bg-amber-500' },
-              { step: '2', label: 'Pending Inspection', desc: 'Product physically received & checked', color: 'bg-orange-500' },
-              { step: '3', label: 'Approve → Restocked', desc: 'Item goes back into inventory', color: 'bg-emerald-500' },
-              { step: '4', label: 'Reject → Written Off', desc: 'Damaged item, not restocked', color: 'bg-red-500' },
-            ].map(s => (
-              <div key={s.step} className="flex items-start gap-3">
-                <div className={`w-5 h-5 rounded-full ${s.color} flex items-center justify-center text-[10px] font-black text-black dark:text-white flex-shrink-0 mt-0.5`}>
-                  {s.step}
-                </div>
-                <div>
-                  <p className="text-xs font-bold text-black dark:text-white">{s.label}</p>
-                  <p className="text-[10px] text-slate-400 dark:text-slate-500">{s.desc}</p>
-                </div>
-              </div>
+      <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_21rem] gap-6 items-start">
+        {/* Returns list */}
+        <section aria-label="Returns" className="min-w-0">
+          <div className="flex gap-2 flex-wrap mb-3" role="group" aria-label="Filter returns">
+            {FILTERS.map((f) => (
+              <button key={f.key} aria-pressed={filter === f.key} onClick={() => { setFilter(f.key); setPage(1); setConfirming(null); }} className="k-chip">
+                {f.label} <span className="ml-1 opacity-70">{counts[f.key]}</span>
+              </button>
             ))}
           </div>
-        </div>
 
-        {/* ── RIGHT: Returns List ── */}
-        <div className="lg:col-span-2">
-          <div className="rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 overflow-hidden shadow-xl">
-            <div className="p-4 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between">
-              <h3 className="text-sm font-bold text-black dark:text-white uppercase tracking-wider">Recent Returns</h3>
-              <span className="text-xs text-slate-400 dark:text-slate-500">{returnsList.length} total</span>
-            </div>
-
-            {returnsList.length === 0 ? (
-              <div className="p-12 text-center text-slate-400 dark:text-slate-500 space-y-2">
-                <Undo2 className="w-8 h-8 mx-auto text-slate-700 mb-2" />
-                <p className="font-bold text-black dark:text-white">No Returns Yet</p>
-                <p className="text-xs">When a customer returns a product, log it using the form.</p>
+          <div className="k-card overflow-hidden">
+            {loadingList ? (
+              <div className="p-4 space-y-3" aria-busy="true">{[0, 1, 2].map((i) => <div key={i} className="k-skel h-14 rounded-2xl animate-pulse" />)}</div>
+            ) : shown.length === 0 ? (
+              <div className="py-14 px-6 text-center">
+                <PackageCheck className="w-8 h-8 mx-auto k-muted mb-2" />
+                <p className="font-bold">{filter === 'waiting' ? 'Nothing waiting for a check' : filter === 'restocked' ? 'Nothing restocked yet' : filter === 'written-off' ? 'Nothing written off' : 'No returns yet'}</p>
+                <p className="text-sm k-muted mt-1">{filter === 'waiting' ? 'When a parcel comes back, find it above and save the return.' : 'Returns you log show up here.'}</p>
               </div>
             ) : (
-              <>
-                {/* Mobile View: Cards */}
-                <div className="md:hidden flex flex-col divide-y divide-slate-100 dark:divide-slate-800/60">
-                  {returnsList.map((ret) => (
-                    <div key={ret.id} className="p-4 active:bg-slate-50 dark:active:bg-slate-800/40 transition-colors">
-                      <div className="flex items-start justify-between mb-3">
-                        <div>
-                          <span className="font-mono font-black text-amber-500 dark:text-amber-400 text-sm tracking-tight block">RET-{ret.id}</span>
-                          <span className="block text-[10px] font-medium text-slate-500 dark:text-slate-400 mt-0.5">
-                            {new Date(ret.date_received).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })}
+              <ul>
+                {pageRows.map((r) => {
+                  const asking = confirming?.id === r.id ? confirming.action : null;
+                  return (
+                    <li key={r.id} className="k-row border-t k-rule first:border-t-0 px-4 sm:px-5 py-4">
+                      <div className="flex items-start gap-4 flex-wrap sm:flex-nowrap">
+                        <div className="w-14 shrink-0 text-sm font-semibold k-muted pt-0.5">{niceDay(r.date_received)}</div>
+                        <div className="min-w-0 flex-1">
+                          <p className="font-bold truncate">{r.customer}</p>
+                          <p className="text-sm k-muted truncate">{r.product}</p>
+                          <p className="text-xs k-muted mt-1"><span className="font-mono">{r.order_id}</span> · {r.return_reason}</p>
+                        </div>
+                        {r.status === 'Pending Inspection' && !asking && (
+                          <div className="flex gap-2 shrink-0">
+                            <button onClick={() => setConfirming({ id: r.id, action: 'restock' })} className="k-btn k-btn-outline-green px-4 py-2 text-sm"><Check className="w-4 h-4" /> Restock</button>
+                            <button onClick={() => setConfirming({ id: r.id, action: 'writeoff' })} className="k-btn k-btn-soft px-4 py-2 text-sm">Write off</button>
+                          </div>
+                        )}
+                        {r.status !== 'Pending Inspection' && (
+                          <span className="rounded-full px-3 py-1 text-xs font-bold shrink-0" style={r.status === 'Restocked' ? { background: 'var(--lime)', color: 'var(--on-lime)' } : { background: 'var(--card2)' }}>
+                            {r.status === 'Restocked' ? 'Back in stock' : 'Written off'}
                           </span>
-                        </div>
-                        <span className={`px-2 py-1 rounded-lg text-[9px] font-black uppercase tracking-wider border ${
-                          ret.status === 'Restocked'
-                            ? 'bg-emerald-500/10 text-emerald-500 dark:text-emerald-400 border-emerald-500/30'
-                            : ret.status === 'Rejected'
-                            ? 'bg-red-500/10 text-red-500 dark:text-red-400 border-red-500/30'
-                            : 'bg-amber-500/10 text-amber-500 dark:text-amber-400 border-amber-500/30'
-                        }`}>
-                          {ret.status}
-                        </span>
+                        )}
                       </div>
 
-                      <div className="grid grid-cols-2 gap-3 mb-3 text-xs">
-                        <div>
-                          <span className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-0.5">Customer</span>
-                          <span className="font-bold text-black dark:text-white block truncate">{ret.customer}</span>
-                          <span className="font-mono text-[11px] text-slate-600 dark:text-slate-400 block">{ret.order_id}</span>
-                        </div>
-                        <div>
-                          <span className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-0.5">Reason</span>
-                          <span className="font-semibold text-black dark:text-white block">{ret.return_reason}</span>
-                        </div>
-                      </div>
-
-                      <div className="bg-slate-50 dark:bg-slate-950 rounded-xl p-3 mb-3 border border-slate-100 dark:border-slate-800/60">
-                        <span className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-0.5">Product</span>
-                        <span className="font-bold text-black dark:text-white leading-tight block line-clamp-1">{ret.product}</span>
-                      </div>
-
-                      {ret.status === 'Pending Inspection' ? (
-                        <div className="flex gap-2 pt-1">
-                          <button
-                            onClick={() => handleApproveReturn(ret)}
-                            className="flex-1 py-2 rounded-xl bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30 active:bg-emerald-500 active:text-slate-950 transition-colors text-xs font-black flex items-center justify-center gap-1.5"
-                          >
-                            <CheckCircle className="w-4 h-4" /> Restock
-                          </button>
-                          <button
-                            onClick={() => handleRejectReturn(ret)}
-                            className="flex-1 py-2 rounded-xl bg-red-500/15 text-red-600 dark:text-red-400 border border-red-500/30 active:bg-red-500 active:text-white transition-colors text-xs font-black flex items-center justify-center gap-1.5"
-                          >
-                            <XCircle className="w-4 h-4" /> Reject
-                          </button>
-                        </div>
-                      ) : (
-                        <div className="pt-1 text-center border-t border-slate-100 dark:border-slate-800/60 pt-3 mt-1">
-                          <span className="text-[11px] text-slate-500 dark:text-slate-400 italic font-medium">
-                            {ret.status === 'Restocked' ? '✓ Item has been restocked to inventory' : '✗ Item was written off'}
-                          </span>
+                      {asking && (
+                        <div className="mt-3 ml-0 sm:ml-[4.5rem] k-card2 rounded-2xl px-4 py-3 flex items-center justify-between gap-3 flex-wrap">
+                          <p className="text-sm">
+                            {asking === 'restock' ? 'Put this product back in stock?' : 'Write off this product as damaged? It will not return to stock.'}
+                          </p>
+                          <div className="flex gap-2">
+                            <button onClick={() => setConfirming(null)} className="k-btn k-btn-ghost px-4 py-2 text-sm">Cancel</button>
+                            <button onClick={() => void decide(r, asking)} disabled={working} className={`k-btn px-4 py-2 text-sm ${asking === 'restock' ? 'k-btn-lime' : 'k-btn-ink'}`}>
+                              {working && <Loader2 className="w-4 h-4 animate-spin" />} {asking === 'restock' ? 'Yes, restock' : 'Yes, write off'}
+                            </button>
+                          </div>
                         </div>
                       )}
-                    </div>
-                  ))}
-                </div>
-
-                {/* Desktop View: Table */}
-                <div className="hidden md:block overflow-x-auto">
-                  <table className="w-full text-left text-xs text-black dark:text-white">
-                    <thead className="bg-slate-50 dark:bg-slate-950 text-black dark:text-white font-bold uppercase text-[10px] border-b border-slate-200 dark:border-slate-800">
-                      <tr>
-                        <th className="p-3.5">Return ID</th>
-                        <th className="p-3.5">Order & Customer</th>
-                        <th className="p-3.5">Product</th>
-                        <th className="p-3.5">Reason</th>
-                        <th className="p-3.5">Date</th>
-                        <th className="p-3.5">Status</th>
-                        <th className="p-3.5 text-right">Action</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-800/60 font-medium">
-                      {returnsList.map((ret) => (
-                        <tr key={ret.id} className="hover:bg-slate-100 dark:bg-slate-800/40 transition">
-                          <td className="p-3.5 font-mono font-black text-amber-400">RET-{ret.id}</td>
-                          <td className="p-3.5">
-                            <span className="font-bold text-black dark:text-white block">{ret.customer}</span>
-                            <span className="text-slate-400 dark:text-slate-500 text-[10px] font-mono">{ret.order_id}</span>
-                          </td>
-                          <td className="p-3.5 text-black dark:text-white font-medium max-w-[120px] truncate">{ret.product}</td>
-                          <td className="p-3.5 text-black dark:text-white">{ret.return_reason}</td>
-                          <td className="p-3.5 text-slate-400 dark:text-slate-500 text-[10px]">
-                            {new Date(ret.date_received).toLocaleDateString('en-IN', { day: '2-digit', month: 'short' })}
-                          </td>
-                          <td className="p-3.5">
-                            <span className={`px-2 py-1 rounded-lg text-[10px] font-black uppercase tracking-wider border ${
-                              ret.status === 'Restocked'
-                                ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30'
-                                : ret.status === 'Rejected'
-                                ? 'bg-red-500/10 text-red-400 border-red-500/30'
-                                : 'bg-amber-500/10 text-amber-400 border-amber-500/30'
-                            }`}>
-                              {ret.status}
-                            </span>
-                          </td>
-                          <td className="p-3.5 text-right">
-                            {ret.status === 'Pending Inspection' ? (
-                              <div className="flex justify-end gap-2">
-                                <button
-                                  onClick={() => handleApproveReturn(ret)}
-                                  className="px-2.5 py-1.5 rounded-lg bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 hover:bg-emerald-500 hover:text-slate-950 transition text-[10px] font-black flex items-center gap-1"
-                                  title="Approve & Restock"
-                                >
-                                  <CheckCircle className="w-3.5 h-3.5" /> Restock
-                                </button>
-                                <button
-                                  onClick={() => handleRejectReturn(ret)}
-                                  className="px-2.5 py-1.5 rounded-lg bg-red-500/15 text-red-400 border border-red-500/30 hover:bg-red-500 hover:text-slate-950 transition text-[10px] font-black flex items-center gap-1"
-                                  title="Reject / Write-off"
-                                >
-                                  <XCircle className="w-3.5 h-3.5" /> Reject
-                                </button>
-                              </div>
-                            ) : (
-                              <span className="text-[10px] text-slate-600 italic">
-                                {ret.status === 'Restocked' ? '✓ Restocked' : '✗ Written off'}
-                              </span>
-                            )}
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </>
+                    </li>
+                  );
+                })}
+              </ul>
             )}
           </div>
-        </div>
+
+          {shown.length > PAGE_SIZE && (
+            <nav className="flex items-center justify-between gap-3 flex-wrap mt-4" aria-label="Returns pages">
+              <p className="text-sm k-muted">{(current - 1) * PAGE_SIZE + 1} to {Math.min(current * PAGE_SIZE, shown.length)} of {shown.length}</p>
+              <div className="flex items-center gap-1.5">
+                <button onClick={() => { setPage(current - 1); setConfirming(null); }} disabled={current === 1} aria-label="Previous page" className="k-btn k-btn-ghost w-10 h-10"><ChevronLeft className="w-4 h-4" /></button>
+                {pageList(current, lastPage).map((n, i) => n === '…'
+                  ? <span key={`gap-${i}`} className="w-6 text-center k-muted" aria-hidden="true">…</span>
+                  : <button key={n} onClick={() => { setPage(n); setConfirming(null); }} aria-label={`Page ${n}`} aria-current={n === current ? 'page' : undefined} className={`k-btn w-10 h-10 text-sm ${n === current ? 'k-btn-ink' : 'k-btn-ghost'}`}>{n}</button>)}
+                <button onClick={() => { setPage(current + 1); setConfirming(null); }} disabled={current === lastPage} aria-label="Next page" className="k-btn k-btn-ghost w-10 h-10"><ChevronRight className="w-4 h-4" /></button>
+              </div>
+            </nav>
+          )}
+        </section>
+
+        {/* Side panel: the numbers that explain the list */}
+        <aside className="space-y-4 xl:sticky xl:top-28" aria-label="Returns at a glance">
+          <div className="k-card p-5">
+            <div className="grid grid-cols-2 gap-4">
+              <div><p className="text-3xl font-bold k-display leading-none">{counts.waiting}</p><p className="text-xs k-muted mt-1.5">waiting for a check</p></div>
+              <div><p className="text-3xl font-bold k-display leading-none">{week}</p><p className="text-xs k-muted mt-1.5">came back in 7 days</p></div>
+              <div><p className="text-3xl font-bold k-display leading-none">{counts.all}</p><p className="text-xs k-muted mt-1.5">returns in total</p></div>
+              <div><p className="text-3xl font-bold k-display leading-none">{restockRate === null ? '–' : `${restockRate}%`}</p><p className="text-xs k-muted mt-1.5">went back in stock</p></div>
+            </div>
+          </div>
+
+          <div className="k-card p-5">
+            <h3 className="font-bold k-display">Why parcels come back</h3>
+            {reasons.length === 0 ? (
+              <p className="text-sm k-muted mt-3">Reasons show here after you log a return.</p>
+            ) : (
+              <ul className="mt-4 space-y-3.5">
+                {reasons.map(([name, n]) => (
+                  <li key={name}>
+                    <div className="flex justify-between gap-3 text-sm"><span className="truncate">{name}</span><span className="font-bold tabular-nums">{n}</span></div>
+                    <div className="h-1.5 rounded-full k-track mt-1.5 overflow-hidden"><div className="h-full rounded-full k-bar" style={{ width: `${(n / reasons[0][1]) * 100}%` }} /></div>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+
+          <div className="k-card p-5">
+            <h3 className="font-bold k-display">How a return works</h3>
+            <ol className="mt-3 space-y-2.5 text-sm">
+              <li className="flex gap-3"><span className="font-bold w-4">1</span><span><span className="font-semibold">Find the order</span> <span className="k-muted">and pick a reason.</span></span></li>
+              <li className="flex gap-3"><span className="font-bold w-4">2</span><span><span className="font-semibold">Check the parcel</span> <span className="k-muted">when it arrives.</span></span></li>
+              <li className="flex gap-3"><span className="font-bold w-4">3</span><span><span className="font-semibold">Restock or write off.</span> <span className="k-muted">Restock puts it back in inventory.</span></span></li>
+            </ol>
+          </div>
+        </aside>
       </div>
     </div>
   );

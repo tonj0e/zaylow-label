@@ -92,12 +92,12 @@ export const CodComingCard: React.FC<Props> = ({ orders, bills }) => {
             const isOpen = open === d.key;
             return (
               <li key={d.key} className="border-t k-rule first:border-t-0">
-                <button onClick={() => setOpen(isOpen ? null : d.key)} aria-expanded={isOpen} className="w-full flex items-center gap-3 px-4 py-3 text-left">
-                  <span className="w-24 shrink-0 text-sm font-semibold">{nice(d.key)}</span>
-                  <span className="flex-1 min-w-0 text-sm k-muted">{d.list.length} parcel{d.list.length === 1 ? '' : 's'} delivered</span>
-                  <span className="text-xs font-medium rounded-full px-2.5 py-1" style={{ background: 'var(--card)' }}>{label[d.state]}</span>
-                  <span className="w-20 text-right text-sm font-bold">{inr(d.total)}</span>
-                  <ChevronDown className="w-4 h-4 k-muted shrink-0 transition-transform" style={{ transform: isOpen ? 'rotate(180deg)' : undefined }} />
+                <button onClick={() => setOpen(isOpen ? null : d.key)} aria-expanded={isOpen} className="w-full grid grid-cols-[1fr_auto_auto] md:grid-cols-[6rem_1fr_auto_5rem_auto] items-center gap-x-3 gap-y-1 px-4 py-3 text-left">
+                  <span className="text-sm font-semibold md:order-1">{nice(d.key)}</span>
+                  <span className="col-start-1 row-start-2 md:col-start-auto md:row-start-auto md:order-2 text-xs md:text-sm k-muted min-w-0">{d.list.length} parcel{d.list.length === 1 ? '' : 's'} delivered</span>
+                  <span className="col-start-2 row-start-2 md:col-start-auto md:row-start-auto md:order-3 text-xs font-medium rounded-full px-2.5 py-1 whitespace-nowrap justify-self-end" style={{ background: 'var(--card)' }}>{label[d.state]}</span>
+                  <span className="col-start-2 row-start-1 md:col-start-auto md:row-start-auto md:order-4 text-right text-sm font-bold">{inr(d.total)}</span>
+                  <ChevronDown className="col-start-3 row-span-2 md:row-span-1 md:col-start-auto md:order-5 w-4 h-4 k-muted shrink-0 transition-transform" style={{ transform: isOpen ? 'rotate(180deg)' : undefined }} />
                 </button>
                 {isOpen && (
                   <div className="px-4 pb-4">

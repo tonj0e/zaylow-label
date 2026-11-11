@@ -1,84 +1,87 @@
-import React, { useState, useEffect } from 'react';
-import { AlertTriangle } from 'lucide-react';
+import React, { useEffect, useRef, useState } from 'react';
+import { CameraOff, Loader2 } from 'lucide-react';
 
 interface ScannerDisplayProps {
   label: string;
   onScan: (text: string) => void;
 }
 
+/** Same code seen again within this time is ignored, so one QR does not fire twenty times. */
+const REPEAT_MS = 2500;
+
+/**
+ * Live camera reader. It starts once and keeps running: the scan handler is held in a ref,
+ * so the parent re-rendering never restarts the camera (that was what made scans get missed).
+ */
 export const ScannerDisplay: React.FC<ScannerDisplayProps> = ({ label, onScan }) => {
-  const videoRef = React.useRef<HTMLVideoElement>(null);
-  const [cameraError, setCameraError] = useState<string | null>(null);
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const handlerRef = useRef(onScan);
+  const [status, setStatus] = useState<'starting' | 'ready' | 'error'>('starting');
+  const [message, setMessage] = useState('');
+
+  useEffect(() => { handlerRef.current = onScan; }, [onScan]);
 
   useEffect(() => {
-    let controls: any = null;
-    let mounted = true;
+    let stopped = false;
+    let controls: { stop: () => void } | null = null;
+    let lastText = '';
+    let lastAt = 0;
 
-    const startScanner = async () => {
+    (async () => {
       try {
-        const { BrowserMultiFormatReader } = await import('@zxing/browser');
-        const codeReader = new BrowserMultiFormatReader();
-
-        if (!videoRef.current || !mounted) return;
-
-        const constraints = { 
-          video: { 
-            facingMode: 'environment',
-            width: { ideal: 1280 },
-            height: { ideal: 720 }
-          } 
-        };
-
-        await codeReader.decodeFromConstraints(constraints, videoRef.current, (result, error, ctrl) => {
-          if (!controls && ctrl) {
-            controls = ctrl;
-          }
-          if (result && mounted) {
-            onScan(result.getText());
-          }
-        });
-      } catch (err: any) {
-        if (mounted) {
-          console.error('Camera error:', err);
-          setCameraError('Camera access denied or not available. Please enter the ID manually.');
-        }
+        if (!navigator.mediaDevices?.getUserMedia) throw new Error('This browser cannot open the camera. Type the number below instead.');
+        const [{ BrowserMultiFormatReader }, { DecodeHintType, BarcodeFormat }] = await Promise.all([import('@zxing/browser'), import('@zxing/library')]);
+        const hints = new Map();
+        hints.set(DecodeHintType.TRY_HARDER, true);
+        hints.set(DecodeHintType.POSSIBLE_FORMATS, [BarcodeFormat.QR_CODE, BarcodeFormat.CODE_128, BarcodeFormat.CODE_39, BarcodeFormat.EAN_13, BarcodeFormat.EAN_8, BarcodeFormat.DATA_MATRIX]);
+        const reader = new BrowserMultiFormatReader(hints, { delayBetweenScanAttempts: 120 });
+        if (!videoRef.current || stopped) return;
+        const c = await reader.decodeFromConstraints(
+          { video: { facingMode: { ideal: 'environment' }, width: { ideal: 1280 }, height: { ideal: 720 } } },
+          videoRef.current,
+          (result) => {
+            if (!result || stopped) return;
+            const text = result.getText().trim();
+            const now = Date.now();
+            if (!text || (text === lastText && now - lastAt < REPEAT_MS)) return;
+            lastText = text; lastAt = now;
+            handlerRef.current(text);
+          },
+        );
+        if (stopped) c.stop(); else { controls = c; setStatus('ready'); }
+      } catch (err: unknown) {
+        if (stopped) return;
+        const name = (err as { name?: string })?.name;
+        setMessage(
+          name === 'NotAllowedError' ? 'Camera is blocked. Allow camera for this site in the browser, or type the number below.'
+          : name === 'NotFoundError' ? 'No camera found. Type the number below.'
+          : name === 'NotReadableError' ? 'Another app is using the camera. Close it, or type the number below.'
+          : (err as Error)?.message || 'The camera did not start. Type the number below.',
+        );
+        setStatus('error');
       }
-    };
+    })();
 
-    startScanner();
+    return () => { stopped = true; controls?.stop(); };
+  }, []);
 
-    return () => {
-      mounted = false;
-      if (controls) {
-        controls.stop();
-      }
-    };
-  }, [onScan]);
-
-  if (cameraError) {
+  if (status === 'error') {
     return (
-      <div className="relative w-full rounded-2xl border-2 border-dashed border-red-500/40 bg-slate-50 dark:bg-slate-950/60 flex flex-col items-center justify-center py-8 mb-4 overflow-hidden">
-        <AlertTriangle className="w-10 h-10 mb-2 text-red-400" />
-        <p className="text-sm text-red-400 text-center px-4">{cameraError}</p>
+      <div role="alert" className="k-card2 rounded-2xl flex flex-col items-center justify-center gap-2 py-8 px-5 text-center" style={{ border: '1px dashed var(--line)' }}>
+        <CameraOff className="w-8 h-8 k-muted" />
+        <p className="text-sm font-medium">{message}</p>
       </div>
     );
   }
 
   return (
-    <div className="relative w-full rounded-2xl border-2 border-emerald-500/40 bg-slate-50 dark:bg-slate-950 overflow-hidden mb-4 aspect-square md:aspect-video flex items-center justify-center">
+    <div className="relative w-full rounded-2xl overflow-hidden aspect-video" style={{ background: '#000' }}>
       <video ref={videoRef} className="absolute inset-0 w-full h-full object-cover" playsInline muted />
-      <div className="absolute inset-0 z-10 pointer-events-none">
-        <div className="w-full h-full border-[40px] border-slate-950/50" />
-      </div>
-      <div className="absolute top-8 left-8 w-8 h-8 border-t-4 border-l-4 border-emerald-400 z-20" />
-      <div className="absolute top-8 right-8 w-8 h-8 border-t-4 border-r-4 border-emerald-400 z-20" />
-      <div className="absolute bottom-8 left-8 w-8 h-8 border-b-4 border-l-4 border-emerald-400 z-20" />
-      <div className="absolute bottom-8 right-8 w-8 h-8 border-b-4 border-r-4 border-emerald-400 z-20" />
-      <div className="absolute bottom-2 left-0 right-0 z-20 text-center">
-        <p className="text-xs text-black dark:text-white bg-white dark:bg-slate-900/80 inline-block px-3 py-1 rounded-full backdrop-blur-sm shadow-sm">
-          Point camera at <span className="text-emerald-400 font-bold">{label}</span> QR code
-        </p>
-      </div>
+      {status === 'starting' && (
+        <div className="absolute inset-0 flex items-center justify-center gap-2 text-sm" style={{ color: '#fff' }}><Loader2 className="w-4 h-4 animate-spin" /> Starting camera…</div>
+      )}
+      <div className="absolute inset-[18%] pointer-events-none rounded-2xl" style={{ border: '2px solid var(--lime)', boxShadow: '0 0 0 999px rgba(0,0,0,.45)' }} />
+      <p className="absolute bottom-2 left-0 right-0 text-center text-xs" style={{ color: '#fff' }}>Hold the {label} QR code inside the green box</p>
     </div>
   );
 };

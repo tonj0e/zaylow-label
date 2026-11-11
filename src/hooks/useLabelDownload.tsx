@@ -1,5 +1,4 @@
 import { useCallback, useRef, useState } from 'react';
-import html2canvas from 'html2canvas';
 import { Download } from 'lucide-react';
 import type { Order, CompanySettings } from '../types';
 import { ThermalLabel } from '../components/label/ThermalLabel';
@@ -16,6 +15,7 @@ export function useLabelDownload(settings: CompanySettings) {
     await new Promise((r) => setTimeout(r, 300)); // let the label render with its styles
     if (labelRef.current) {
       try {
+        const { default: html2canvas } = await import('html2canvas');
         const canvas = await html2canvas(labelRef.current, { scale: 3, useCORS: true, backgroundColor: '#ffffff', logging: false });
         const link = document.createElement('a');
         link.download = `ZAYLOW-Label-${order.id}.png`;

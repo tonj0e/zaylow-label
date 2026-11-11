@@ -30,19 +30,20 @@ export const ThermalLabel: React.FC<ThermalLabelProps> = ({
   // Determine if this is a small label (< 60mm wide or < 80mm tall)
   const isSmall = labelSize.widthMm < 70 || labelSize.heightMm < 80;
 
-  const fromAddress = isCod
+  // The "From" block comes from Settings > Warehouse address, for COD and Prepaid alike.
+  // Only if that address was left empty do we fall back to the original built-in sender.
+  const wh = settings.warehouse;
+  const hasAddress = !!wh?.addressLine?.trim();
+  const fromAddress = hasAddress
     ? {
-        name: 'JOSHWA M JOLLY',
-        address: 'MUNDACKAL (H) VALAMANGALAM NORTH THURAVOOR PO CHERTHALA',
-        pin: '688532',
-        phone: '6282010344'
+        name: (wh.contactPerson?.trim() || wh.companyName?.trim() || settings.companyName || '').toUpperCase(),
+        address: [wh.addressLine, wh.city, wh.state].map((x) => x?.trim()).filter(Boolean).join(', ').toUpperCase(),
+        pin: wh.pinCode?.trim() || '',
+        phone: wh.phone?.trim() || '',
       }
-    : {
-        name: 'ZAYLOW',
-        address: 'GOLD MAREN SEE FOODS THURAVOOR PO CHERTHALA',
-        pin: '688532',
-        phone: '6282010344'
-      };
+    : isCod
+      ? { name: 'JOSHWA M JOLLY', address: 'MUNDACKAL (H) VALAMANGALAM NORTH THURAVOOR PO CHERTHALA', pin: '688532', phone: '6282010344' }
+      : { name: 'ZAYLOW', address: 'GOLD MAREN SEE FOODS THURAVOOR PO CHERTHALA', pin: '688532', phone: '6282010344' };
 
   // QR Code Payload contains essential tracking info
   const qrPayload = JSON.stringify({
@@ -244,7 +245,7 @@ export const ThermalLabel: React.FC<ThermalLabelProps> = ({
           <div className="text-[9px] font-medium leading-[1.4] uppercase">
             <p className="whitespace-normal leading-tight mb-1 font-bold">PRODUCT NAME: {order.item.productName}</p>
             <p>QUANTITY: {order.item.quantity}</p>
-            <p>PRICE: ₹{order.codAmount > 0 ? order.codAmount : ''}</p>
+            {(order.codAmount > 0 || (order.advancePaid ?? 0) > 0) && <p>PRICE: ₹{order.codAmount > 0 ? order.codAmount : order.advancePaid}</p>}
             <p>ORDER ID: #{order.id.replace('ZYL-', '')}</p>
             {order.productId && <p>PRODUCT ID: {order.productId}</p>}
             {order.cartonId && <p>CARTON ID: {order.cartonId}</p>}

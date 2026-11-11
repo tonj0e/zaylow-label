@@ -10,6 +10,7 @@ import { STATUS_DOT, STATUS_ORDER } from './orderUi';
 
 interface OrdersViewProps {
   orders: Order[];
+  loading?: boolean;
   settings: CompanySettings;
   searchQuery: string;
   statusFilter: OrderStatus | 'ALL';
@@ -44,7 +45,7 @@ const IconBtn: React.FC<{ label: string; onClick: () => void; disabled?: boolean
 );
 
 export const OrdersView: React.FC<OrdersViewProps> = ({
-  orders, settings, searchQuery, statusFilter, setStatusFilter, onOpenOrderModal: _onOpenOrderModal, onNavigateToGenerator,
+  orders, loading, settings, searchQuery, statusFilter, setStatusFilter, onOpenOrderModal: _onOpenOrderModal, onNavigateToGenerator,
   onAddToQueue, onDownloadBulkPDF, onDeleteOrder, onUpdateStatus, onUpdateTracking, onEditOrder, onNavigateToWarrantyCard,
 }) => {
   const { download, downloadingId, overlay } = useLabelDownload(settings);
@@ -137,8 +138,18 @@ export const OrdersView: React.FC<OrdersViewProps> = ({
   const filtersActive = courierFilter !== 'ALL' || paymentFilter !== 'ALL';
   const pills: [string, string, number][] = [['ALL', 'All', orders.length], ...STATUS_ORDER.filter((s) => (counts[s] || 0) > 0 || s === statusFilter).map((s) => [s, s, counts[s] || 0] as [string, string, number])];
 
+  if (loading && orders.length === 0) {
+    return (
+      <div className="p-4 md:p-6 space-y-5 max-w-7xl mx-auto pb-24 md:pb-6" aria-busy="true" aria-label="Loading orders">
+        <div><h2 className="text-2xl font-bold k-display">Orders</h2><p className="text-sm k-muted mt-1">Loading your orders…</p></div>
+        <div className="grid grid-cols-2 xl:grid-cols-4 gap-4">{[0, 1, 2, 3].map((i) => <div key={i} className="k-skel h-36 rounded-3xl animate-pulse" />)}</div>
+        <div className="k-card p-4 space-y-3">{[0, 1, 2, 3, 4, 5].map((i) => <div key={i} className="k-skel h-14 rounded-2xl animate-pulse" />)}</div>
+      </div>
+    );
+  }
+
   return (
-    <div className="kdash min-h-full p-3 sm:p-5 md:p-7 select-none pb-32 md:pb-28">
+    <div className="kdash min-h-full p-4 sm:p-5 md:p-7 select-none pb-32 md:pb-28">
       <div className="space-y-5">
         <header className="k-rise flex items-end justify-between gap-4" style={{ ['--i' as string]: 0 }}>
           <div>
@@ -154,7 +165,7 @@ export const OrdersView: React.FC<OrdersViewProps> = ({
         </header>
 
         {/* four metric tiles, each with a small live chart */}
-        <dl className="k-rise grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3 md:gap-4" style={{ ['--i' as string]: 1 }}>
+        <dl className="k-rise grid sm:grid-cols-2 xl:grid-cols-4 gap-3 md:gap-4 max-md:flex max-md:overflow-x-auto max-md:snap-x max-md:snap-mandatory max-md:-mx-4 max-md:px-4 max-md:pb-1 [&>div]:max-md:min-w-[68%] [&>div]:max-md:snap-start [&>div]:max-md:shrink-0" style={{ ['--i' as string]: 1 }}>
           <div className="k-card p-5 overflow-hidden">
             <div className="flex items-start justify-between">
               <dt className="text-sm k-muted">Placed today</dt>
@@ -212,12 +223,12 @@ export const OrdersView: React.FC<OrdersViewProps> = ({
 
         {/* status tabs on the left, filters on the right */}
         <div className="k-rise flex flex-col xl:flex-row xl:items-end justify-between gap-3 border-b k-rule" style={{ ['--i' as string]: 2 }}>
-          <nav aria-label="Filter by status">
-            <ul className="flex flex-wrap gap-x-7">
+          <nav aria-label="Filter by status" className="max-md:-mx-4">
+            <ul className="flex flex-wrap gap-x-7 max-md:flex-nowrap max-md:overflow-x-auto max-md:gap-x-5 max-md:px-4 snap-row">
               {pills.map(([id, label, n]) => {
                 const on = statusFilter === id;
                 return (
-                  <li key={id}>
+                  <li key={id} className="shrink-0">
                     <button
                       onClick={() => { setStatusFilter(id as OrderStatus | 'ALL'); setPage(1); }}
                       aria-pressed={on}
@@ -234,7 +245,7 @@ export const OrdersView: React.FC<OrdersViewProps> = ({
             </ul>
           </nav>
 
-          <div className="flex items-center gap-2 flex-wrap pb-2.5">
+          <div className="flex items-center gap-2 flex-wrap pb-2.5 max-md:grid max-md:grid-cols-2">
             <select aria-label="Courier" value={courierFilter} onChange={(e) => { setCourierFilter(e.target.value); setPage(1); }} className="k-field" style={{ width: 'auto', borderRadius: 999, padding: '.45rem 1rem', fontSize: '.8rem' }}>
               <option value="ALL">All couriers</option>
               {['Delhivery', 'DTDC', 'India Post', 'Shiprocket', 'NimbusPost', 'Bluedart', 'Ekart'].map((c) => <option key={c} value={c}>{c}</option>)}
@@ -258,7 +269,9 @@ export const OrdersView: React.FC<OrdersViewProps> = ({
             <span>Order</span><span>Customer</span><span>Deliver to</span><span>Product</span><span>Payment</span><span>Status</span><span className="text-right">Actions</span>
           </div>
 
-          {rows.length === 0 ? (
+          {rows.length === 0 && loading ? (
+            <div className="p-4 space-y-3" aria-busy="true" aria-label="Loading orders">{[0, 1, 2, 3, 4, 5].map((i) => <div key={i} className="k-skel h-14 rounded-2xl animate-pulse" />)}</div>
+          ) : rows.length === 0 ? (
             <p className="p-14 text-center text-sm k-muted">No order matches. Try another search or clear the filters.</p>
           ) : (
             <ul>

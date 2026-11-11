@@ -22,8 +22,8 @@ const MM_TO_PX = 3.779527;
 const ROW = 66;
 const TO_PRINT = ['Pending', 'Processing', 'Label Generated'];
 const DOT: Record<string, string> = {
-  Pending: '#f5a623', Processing: '#4f9bff', 'Label Generated': '#a78bfa', Printed: '#22c55e',
-  Shipped: '#22d3ee', Delivered: '#3fb950', Cancelled: '#ff5a45', Claims: '#f472b6', Returned: '#fb923c',
+  Pending: '#f5a623', Processing: '#8d9690', 'Label Generated': '#b4bdb6', Printed: '#86efac',
+  Shipped: '#22c55e', Delivered: '#15803d', Cancelled: '#ff5a45', Claims: '#fbbf24', Returned: '#fb923c',
 };
 
 const Row: React.FC<{ label: string; children: React.ReactNode }> = ({ label, children }) => (

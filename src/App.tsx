@@ -1,29 +1,16 @@
-import { useState, useEffect, useLayoutEffect, useRef } from 'react';
+import { lazy, Suspense, useState, useEffect, useLayoutEffect, useRef } from 'react';
+import { ErpService, isErpReady, loadErpConfig } from './services/erpService';
 import type { ActiveTab } from './components/layout/Sidebar';
+import { prefetchAll } from './services/prefetch';
+import { fetchCached } from './services/swrCache';
+import { PageSkeleton } from './components/common/PageSkeleton';
+import { MobileNav } from './components/layout/MobileNav';
 import { Sidebar } from './components/layout/Sidebar';
 import { Header } from './components/layout/Header';
 import { DashboardView } from './components/dashboard/DashboardView';
 import { OrdersView } from './components/orders/OrdersView';
 import { OrderEntryModal } from './components/orders/OrderEntryModal';
-import { LabelGeneratorView } from './components/generator/LabelGeneratorView';
-import { BulkImportView } from './components/bulk/BulkImportView';
-import { PrintQueueView } from './components/printQueue/PrintQueueView';
-import { SettingsView } from './components/settings/SettingsView';
-import ReportsView from './components/reports/ReportsView';
-import { ReturnsView } from './components/warehouse/ReturnsView';
-import { InventoryOutView } from './components/warehouse/InventoryOutView';
-import { StockSummary } from './components/warehouse/StockSummary';
-import { WarrantyView } from './components/warranty/WarrantyView';
-import { WarrantyCardView } from './components/warranty/WarrantyCardView';
-import { ClaimsView } from './components/claims/ClaimsView';
-import { TrackingView } from './components/tracking/TrackingView';
-import { InventoryAdd } from './components/inventory/InventoryAdd';
-import { InventoryList } from './components/inventory/InventoryList';
-import { InventorySearch } from './components/inventory/InventorySearch';
 import { ThermalLabel } from './components/label/ThermalLabel';
-import { CartonsView } from './components/warehouse/CartonsView';
-import { ProductsView } from './components/warehouse/ProductsView';
-import html2canvas from 'html2canvas';
 import { Printer } from 'lucide-react';
 import type { Order, CompanySettings, PrintQueueItem, OrderStatus } from './types';
 import { StorageService } from './services/storage';
@@ -31,6 +18,49 @@ import { DataService } from './services/dataService';
 import { ENABLE_MULTI_WAREHOUSE } from './constants/featureFlags';
 import { loadTelegramConfig, sendTelegramMessage, TelegramMessages } from './services/telegramService';
 import { startTelegramPolling, stopTelegramPolling } from './services/telegramBotService';
+
+// Pages load on demand, so the first visit downloads only what it needs. They are fetched quietly in the background right after the app opens.
+
+const pageLoaders = {
+  LabelGeneratorView: () => import('./components/generator/LabelGeneratorView').then((m) => ({ default: m.LabelGeneratorView })),
+  BulkImportView: () => import('./components/bulk/BulkImportView').then((m) => ({ default: m.BulkImportView })),
+  PrintQueueView: () => import('./components/printQueue/PrintQueueView').then((m) => ({ default: m.PrintQueueView })),
+  MapView: () => import('./components/map/RealMapView').then((m) => ({ default: m.RealMapView })),
+  ErpView: () => import('./components/erp/ErpView').then((m) => ({ default: m.ErpView })),
+  SettingsView: () => import('./components/settings/SettingsView').then((m) => ({ default: m.SettingsView })),
+  ReturnsView: () => import('./components/warehouse/ReturnsView').then((m) => ({ default: m.ReturnsView })),
+  InventoryOutView: () => import('./components/warehouse/InventoryOutView').then((m) => ({ default: m.InventoryOutView })),
+  StockSummary: () => import('./components/warehouse/StockSummary').then((m) => ({ default: m.StockSummary })),
+  WarrantyView: () => import('./components/warranty/WarrantyView').then((m) => ({ default: m.WarrantyView })),
+  WarrantyCardView: () => import('./components/warranty/WarrantyCardView').then((m) => ({ default: m.WarrantyCardView })),
+  ClaimsView: () => import('./components/claims/ClaimsView').then((m) => ({ default: m.ClaimsView })),
+  TrackingView: () => import('./components/tracking/TrackingView').then((m) => ({ default: m.TrackingView })),
+  InventoryAdd: () => import('./components/inventory/InventoryAdd').then((m) => ({ default: m.InventoryAdd })),
+  InventoryList: () => import('./components/inventory/InventoryList').then((m) => ({ default: m.InventoryList })),
+  InventorySearch: () => import('./components/inventory/InventorySearch').then((m) => ({ default: m.InventorySearch })),
+  CartonsView: () => import('./components/warehouse/CartonsView').then((m) => ({ default: m.CartonsView })),
+  ProductsView: () => import('./components/warehouse/ProductsView').then((m) => ({ default: m.ProductsView })),
+  ReportsView: () => import('./components/reports/ReportsView'),
+} as const;
+const LabelGeneratorView = lazy(pageLoaders.LabelGeneratorView);
+const BulkImportView = lazy(pageLoaders.BulkImportView);
+const PrintQueueView = lazy(pageLoaders.PrintQueueView);
+const SettingsView = lazy(pageLoaders.SettingsView);
+const ErpView = lazy(pageLoaders.ErpView);
+const MapView = lazy(pageLoaders.MapView);
+const ReturnsView = lazy(pageLoaders.ReturnsView);
+const InventoryOutView = lazy(pageLoaders.InventoryOutView);
+const StockSummary = lazy(pageLoaders.StockSummary);
+const WarrantyView = lazy(pageLoaders.WarrantyView);
+const WarrantyCardView = lazy(pageLoaders.WarrantyCardView);
+const ClaimsView = lazy(pageLoaders.ClaimsView);
+const TrackingView = lazy(pageLoaders.TrackingView);
+const InventoryAdd = lazy(pageLoaders.InventoryAdd);
+const InventoryList = lazy(pageLoaders.InventoryList);
+const InventorySearch = lazy(pageLoaders.InventorySearch);
+const CartonsView = lazy(pageLoaders.CartonsView);
+const ProductsView = lazy(pageLoaders.ProductsView);
+const ReportsView = lazy(pageLoaders.ReportsView);
 
 export function App() {
   // Ref for the main scrollable content area — used to reset scroll on every navigation
@@ -67,8 +97,23 @@ export function App() {
   }, []);
 
   const [orders, setOrders] = useState<Order[]>([]);
+  const [ordersLoaded, setOrdersLoaded] = useState(false);
+  const [ordersFresh, setOrdersFresh] = useState(false);
   const [settings, setSettings] = useState<CompanySettings>(StorageService.getSettings());
   const [printQueue, setPrintQueue] = useState<PrintQueueItem[]>(StorageService.getPrintQueue());
+
+  // ERP: while the site is open, send today's new or changed orders by themselves
+  useEffect(() => {
+    if (!ordersFresh) return;
+    const cfg = loadErpConfig();
+    if (!cfg.auto || !isErpReady(cfg)) return;
+    const t = setTimeout(() => {
+      const pending = ErpService.pendingToday(orders);
+      if (pending.length) void ErpService.send(cfg, pending, `Automatic: ${pending.length} order${pending.length === 1 ? '' : 's'}`);
+    }, 4000);
+    return () => clearTimeout(t);
+  }, [orders, ordersFresh]);
+
 
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [darkMode, setDarkMode] = useState<boolean>(() => {
@@ -93,7 +138,10 @@ export function App() {
   ].join('|')).join(';');
   const fetchOrders = async () => {
     lastOrderFetch.current = Date.now();
-    const loadedOrders = await DataService.getOrders();
+    // callers that ask at the same moment share one download of the orders
+    const loadedOrders = await fetchCached('orders-all', () => DataService.getOrders(), 1500);
+    setOrdersLoaded(true);
+    setOrdersFresh(true);
     // Only touch state when something actually changed, so pages don't re-render for nothing
     if (orderSig(loadedOrders) === orderSig(ordersRef.current)) return;
     setOrders(loadedOrders);
@@ -101,6 +149,10 @@ export function App() {
 
   useEffect(() => {
     fetchOrders();
+    prefetchAll(); // download the warehouse data at the same time, so every page is ready when you open it
+    const warm = setTimeout(() => { Object.values(pageLoaders).forEach((load) => { void load(); }); }, 1200); // then the page files
+    const mapData = setTimeout(() => { void import('./data/inPincodes.json'); void import('./data/indiaDistricts.json'); }, 4000); // and the map's pin codes and districts, so the map opens at once
+    return () => { clearTimeout(warm); clearTimeout(mapData); };
   }, []);
 
   // Refresh orders whenever the user navigates back to orders or dashboard
@@ -123,6 +175,7 @@ export function App() {
           for (const order of bulkPrintOrders) {
             const el = document.getElementById(`bulk-print-label-${order.id}`);
             if (el) {
+              const { default: html2canvas } = await import('html2canvas');
               const canvas = await html2canvas(el, {
                 scale: 3,
                 useCORS: true,
@@ -334,8 +387,9 @@ export function App() {
   const pendingCount = orders.filter(o => o.status === 'Pending').length;
 
   return (
-    <div className={`kdash min-h-screen flex text-black dark:text-white ${darkMode ? 'dark' : ''}`}>
+    <div className={`kdash flex overflow-hidden text-black dark:text-white ${darkMode ? 'dark' : ''}`} style={{ height: '100dvh' }}>
       {/* Sidebar Navigation */}
+      <MobileNav activeTab={activeTab} onNavigate={navigateTo} onNewOrder={() => setIsOrderModalOpen(true)} onMore={() => setIsSidebarOpen(true)} pendingCount={pendingCount} />
       <Sidebar
         activeTab={activeTab}
         setActiveTab={navigateTo}
@@ -348,7 +402,7 @@ export function App() {
       />
 
       {/* Main Content Area */}
-      <div className="flex-1 flex flex-col min-w-0">
+      <div className="flex-1 flex flex-col min-w-0 min-h-0">
         <Header
           searchQuery={searchQuery}
           setSearchQuery={(q: string) => {
@@ -364,8 +418,10 @@ export function App() {
           onOpenSidebar={() => setIsSidebarOpen(true)}
         />
 
-        <main ref={mainRef} className="flex-1 overflow-y-auto">
-          {activeTab === 'dashboard' && (
+        <main ref={mainRef} className="flex-1 overflow-y-auto max-md:pb-24">
+          <Suspense fallback={<PageSkeleton title="Loading" />}>
+          {activeTab === 'dashboard' && !ordersLoaded && <PageSkeleton title="Dashboard" />}
+          {activeTab === 'dashboard' && ordersLoaded && (
             <DashboardView
               orders={orders}
               settings={settings}
@@ -397,6 +453,7 @@ export function App() {
           {activeTab === 'orders' && (
             <OrdersView
               orders={orders}
+              loading={!ordersLoaded}
               settings={settings}
               searchQuery={searchQuery}
               statusFilter={orderStatusFilter}
@@ -427,7 +484,8 @@ export function App() {
             />
           )}
 
-          {activeTab === 'tracking' && (
+          {activeTab === 'tracking' && !ordersLoaded && <PageSkeleton title="Tracking and COD" />}
+          {activeTab === 'tracking' && ordersLoaded && (
             <TrackingView
               orders={orders}
               settings={settings}
@@ -460,13 +518,15 @@ export function App() {
               {activeTab === 'stock-summary' && <StockSummary />}
               {activeTab === 'cartons' && <CartonsView />}
               {activeTab === 'products' && <ProductsView />}
-              {activeTab === 'reports' && <ReportsView />}
+              {activeTab === 'reports' && <ReportsView orders={orders} loading={!ordersLoaded} onOpenOrders={() => navigateTo('orders')} />}
             </>
           )}
 
           {/* Warranty Section - Always rendered */}
-          {activeTab === 'warranty' && (
+          {activeTab === 'warranty' && !ordersLoaded && <PageSkeleton title="Warranty" />}
+          {activeTab === 'warranty' && ordersLoaded && (
             <WarrantyView
+              orders={orders}
               onNavigateToWarrantyCard={(order) => {
                 setSelectedOrderForWarrantyCard(order || null);
                 navigateTo('warranty-cards');
@@ -479,14 +539,19 @@ export function App() {
               initialOrder={selectedOrderForWarrantyCard}
             />
           )}
-          {activeTab === 'claims' && <ClaimsView />}
+          {activeTab === 'claims' && !ordersLoaded && <PageSkeleton title="Claims" />}
+          {activeTab === 'claims' && ordersLoaded && <ClaimsView orders={orders} onRefreshOrders={async () => { setOrders(await DataService.getOrders()); }} />}
 
+          {activeTab === 'erp' && <ErpView orders={orders} />}
+          {activeTab === 'shipping-map' && !ordersLoaded && <PageSkeleton title="Shipping map" />}
+          {activeTab === 'shipping-map' && ordersLoaded && <MapView orders={orders} settings={settings} onRefresh={fetchOrders} />}
           {activeTab === 'settings' && (
             <SettingsView
               settings={settings}
               onSaveSettings={handleSaveSettings}
             />
           )}
+          </Suspense>
         </main>
       </div>
 

@@ -2,6 +2,7 @@ import { supabase } from './supabase';
 import type { Order, OrderStatus } from '../types';
 import { buildRemarks } from '../utils/orderRemarks';
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const anySupabase = supabase as any;
 
 const PAGE_SIZE = 1000; // matches supabase/config.toml max_rows
@@ -258,6 +259,23 @@ export class DataService {
   static async deductInventory(_productName: string, _quantity: number): Promise<void> {
     // No-op: Inventory is now managed dynamically via 'inventory_items' status
     return;
+  }
+
+  /** Opens or updates the claim on an order. Opening one also moves the order to "Claims". */
+  static async updateClaim(id: string, claim: { status?: string; reason?: string; date?: string; markOrder?: boolean }): Promise<boolean> {
+    try {
+      const payload: Record<string, unknown> = {};
+      if (claim.status !== undefined) payload.claim_status = claim.status;
+      if (claim.reason !== undefined) payload.claim_reason = claim.reason;
+      if (claim.date !== undefined) payload.claim_date = claim.date;
+      if (claim.markOrder) payload.status = 'Claims';
+      const { error } = await anySupabase.from('orders').update(payload).eq('inventory_id', id);
+      if (error) { console.error('Error updating claim:', error); return false; }
+      return true;
+    } catch (err) {
+      console.error('Error updating claim:', err);
+      return false;
+    }
   }
 
   static async updateOrderStatus(id: string, status: OrderStatus): Promise<boolean> {
@@ -691,6 +709,7 @@ export class DataService {
   // --- CARTON & PRODUCT TRACKING (FOR SCANNER) ---
 
   static async getCartonById(cartonId: string): Promise<any | null> {
+    if (!UUID_RE.test(cartonId.trim())) return null; // a typed name or SKU is not an ID; asking the database would just fail
     const { data, error } = await anySupabase
       .from('cartons')
       .select('*')
@@ -705,6 +724,28 @@ export class DataService {
       return null;
     }
     return data;
+  }
+
+  /** Finds a carton by its scanned ID, or by the location label someone typed. */
+  static async findCarton(raw: string): Promise<any | null> {
+    const v = raw.trim();
+    if (!v) return null;
+    const byId = await this.getCartonById(v);
+    if (byId) return byId;
+    const { data } = await anySupabase.from('cartons').select('*').ilike('location', v).limit(2);
+    return data && data.length === 1 ? data[0] : null;
+  }
+
+  /** Finds a product by scanned ID, or by the SKU / number someone typed (case-insensitive). */
+  static async findProduct(raw: string): Promise<any | null> {
+    const v = raw.trim();
+    if (!v) return null;
+    const byId = await this.getProductById(v);
+    if (byId) return byId;
+    const { data } = await anySupabase.from('inventory_items').select('*').ilike('sku', v).limit(2);
+    if (data && data.length === 1) return data[0];
+    if (data && data.length > 1) throw new Error(`More than one product has the number "${v}". Scan its QR code instead.`);
+    return null;
   }
 
   static async getProductCountInCarton(cartonId: string): Promise<number> {
@@ -722,6 +763,7 @@ export class DataService {
   }
 
   static async getProductById(productId: string): Promise<any | null> {
+    if (!UUID_RE.test(productId.trim())) return null;
     const { data, error } = await anySupabase
       .from('inventory_items')
       .select('*')
@@ -787,6 +829,19 @@ export class DataService {
       return null;
     }
     return data;
+  }
+
+  /** Saves many units in a few requests instead of one request per unit. */
+  static async addProducts(items: { product_name: string; sku?: string | null; carton_id?: string | null }[]): Promise<any[]> {
+    const now = new Date().toISOString();
+    const rows = items.map((p) => ({ product_name: p.product_name, sku: p.sku ?? null, carton_id: p.carton_id ?? null, qr_code: null, barcode: null, status: 'In Stock', order_id: null, customer_name: null, reserved_at: null, created_at: now, updated_at: now }));
+    const out: any[] = [];
+    for (let i = 0; i < rows.length; i += 200) {
+      const { data, error } = await anySupabase.from('inventory_items').insert(rows.slice(i, i + 200)).select();
+      if (error) { console.error('Error adding products:', error); break; }
+      out.push(...(data || []));
+    }
+    return out;
   }
 
   static async getCartons(): Promise<any[]> {
@@ -958,6 +1013,15 @@ export class DataService {
 
   static async getCartonsWithProductCounts(): Promise<any[]> {
     return (await this.getInventoryOverview()).cartons;
+  }
+
+  /** Gives every unit with one of these product names the new name. Past orders keep the name they were sold under. */
+  static async renameProducts(names: string[], target: string): Promise<number | null> {
+    const clean = [...new Set(names.map((n) => n.trim()).filter(Boolean))];
+    if (clean.length === 0 || !target.trim()) return 0;
+    const { data, error } = await anySupabase.from('inventory_items').update({ product_name: target.trim() }).in('product_name', clean).select('id');
+    if (error) { console.error('Error renaming products:', error); return null; }
+    return (data || []).length;
   }
 
   static async getInventoryOutHistory(): Promise<any[]> {

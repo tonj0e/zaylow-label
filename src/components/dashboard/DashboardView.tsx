@@ -1,3 +1,4 @@
+import { canonicalProduct } from '../../utils/productNames';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import type { Order, CompanySettings, OrderStatus } from '../../types';
 import { DataService } from '../../services/dataService';
@@ -47,13 +48,13 @@ type Range = 7 | 30;
 
 const STATUS_DOT: Record<string, string> = {
   Pending: '#f5a623',
-  Processing: '#4f9bff',
-  'Label Generated': '#a78bfa',
-  Printed: '#22c55e',
-  Shipped: '#22d3ee',
-  Delivered: '#3fb950',
+  Processing: '#8d9690',
+  'Label Generated': '#b4bdb6',
+  Printed: '#86efac',
+  Shipped: '#22c55e',
+  Delivered: '#15803d',
   Cancelled: '#ff5a45',
-  Claims: '#f472b6',
+  Claims: '#fbbf24',
   Returned: '#fb923c',
 };
 
@@ -386,7 +387,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     const demand: Record<string, number> = {};
     live.forEach((o) => {
       if (now - new Date(o.createdAt).getTime() <= 7 * DAY) {
-        const k = norm(o.item.productName);
+        const k = norm(canonicalProduct(o.item.productName));
         demand[k] = (demand[k] || 0) + (o.item.quantity || 1);
       }
     });
@@ -484,28 +485,28 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
 
       <header className="flex flex-col lg:flex-row lg:items-end justify-between gap-4">
         <div>
-          <h2 className="k-display text-3xl sm:text-4xl font-bold">{greeting}, {settings.companyName || 'ZAYLOW'}</h2>
+          <h2 className="k-display text-2xl sm:text-4xl font-bold">{greeting}, {settings.companyName || 'ZAYLOW'}</h2>
           <p className="text-sm k-muted mt-1">
             {m.toPrint > 0
               ? `${m.toPrint} ${m.toPrint === 1 ? 'order needs' : 'orders need'} a label. ${m.readyToShip} ${m.readyToShip === 1 ? 'parcel is' : 'parcels are'} ready to ship.`
               : `No labels waiting. ${m.readyToShip} ${m.readyToShip === 1 ? 'parcel is' : 'parcels are'} ready to ship.`}
           </p>
         </div>
-        <div className="flex items-center gap-2 flex-wrap">
-          <div role="tablist" aria-label="Dashboard sections" className="k-card p-1 flex rounded-full" style={{ borderRadius: 999 }}>
+        <div className="flex items-center gap-2 flex-wrap max-md:grid max-md:grid-cols-2">
+          <div role="tablist" aria-label="Dashboard sections" className="k-card p-1 flex rounded-full max-md:col-span-2" style={{ borderRadius: 999 }}>
             {tabs.map((t) => (
-              <button key={t.id} role="tab" aria-selected={tab === t.id} onClick={() => setTab(t.id)} className={`px-4 py-2 rounded-full text-sm font-semibold transition-colors ${tab === t.id ? 'k-btn-lime' : 'k-muted hover:opacity-80'}`}>
+              <button key={t.id} role="tab" aria-selected={tab === t.id} onClick={() => setTab(t.id)} className={`px-4 py-2 rounded-full text-sm font-semibold transition-colors whitespace-nowrap max-md:flex-1 max-md:px-2 ${tab === t.id ? 'k-btn-lime' : 'k-muted hover:opacity-80'}`}>
                 {t.label}
               </button>
             ))}
           </div>
-          <button onClick={() => setSearchOpen(true)} className="k-btn-ghost rounded-full px-4 py-2.5 text-sm font-semibold flex items-center gap-2">
+          <button onClick={() => setSearchOpen(true)} className="k-btn-ghost rounded-full px-4 py-2.5 text-sm font-semibold flex items-center gap-2 max-md:justify-center">
             <Search className="w-4 h-4" /> Search <kbd className="hidden sm:inline text-[10px] k-muted rounded px-1.5 py-0.5 k-card2">Ctrl K</kbd>
           </button>
-          <button onClick={onNavigateToBulk} className="k-btn-ghost rounded-full px-4 py-2.5 text-sm font-semibold flex items-center gap-1.5">
+          <button onClick={onNavigateToBulk} className="k-btn-ghost rounded-full px-4 py-2.5 text-sm font-semibold flex items-center gap-1.5 max-md:justify-center">
             <Zap className="w-4 h-4 k-lime-text" /> Bulk import
           </button>
-          <button onClick={() => setScannerOpen(true)} className="k-btn-lime rounded-full px-5 py-2.5 text-sm font-bold flex items-center gap-2 shadow-lg" style={{ boxShadow: '0 8px 24px -8px var(--lime)' }}>
+          <button onClick={() => setScannerOpen(true)} className="k-btn-lime rounded-full px-5 py-3 text-sm font-bold flex items-center gap-2 shadow-lg max-md:col-span-2 max-md:justify-center" style={{ boxShadow: '0 8px 24px -8px var(--lime)' }}>
             <ScanLine className="w-4 h-4" /> Scan to ship
           </button>
         </div>
@@ -513,7 +514,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
 
       {/* problems strip */}
       {tab === 'overview' && (
-      <section aria-label="Things that need attention" className="k-card p-4 md:p-5 k-hot">
+      <section aria-label="Things that need attention" className="hidden md:block k-card p-4 md:p-5 k-hot">
         {problems.length === 0 ? (
           <p className="text-sm font-semibold k-lime-text flex items-center gap-2"><PackageCheck className="w-4 h-4" /> Nothing is stuck. No delays, claims or empty shelves.</p>
         ) : (
@@ -535,8 +536,47 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
       )}
 
       <div key={tab} className="tab-panel space-y-5">
-        {tab === 'overview' && (
-          <section className="grid grid-cols-2 xl:grid-cols-4 gap-3 md:gap-4" aria-label="Key numbers">
+        {tab === 'overview' && (<>
+          <div className="md:hidden space-y-3">
+            <section className="grid grid-cols-2 gap-3" aria-label="Today and sales">
+              <div className="k-card p-4">
+                <p className="text-xs k-muted flex items-center gap-1.5"><Layers className="w-3.5 h-3.5" /> Orders today</p>
+                <p className="k-display text-5xl font-bold leading-none mt-3"><Count value={m.today.orders} /></p>
+                <p className="text-xs k-muted mt-2">{inr(m.today.sales)} in sales</p>
+              </div>
+              <div className="k-card p-4">
+                <p className="text-xs k-muted flex items-center gap-1.5"><IndianRupee className="w-3.5 h-3.5" /> Sales, last {range} days</p>
+                <p className="k-display text-3xl font-bold leading-none mt-3"><Count value={m.salesTotal} money /></p>
+                <p className="text-xs k-muted mt-2">{inr(m.codTotal)} to collect</p>
+              </div>
+            </section>
+            <section className="k-card p-4" aria-label="Orders per day">
+              <div className="flex items-center justify-between gap-2 mb-1">
+                <div>
+                  <h3 className="k-display text-xl font-bold">Orders per day</h3>
+                  <p className="text-xs k-muted">{m.curTotal} orders{m.trend !== null && <span className={`font-semibold ${m.trend >= 0 ? 'k-lime-text' : 'k-bad'}`}> {m.trend >= 0 ? '+' : ''}{m.trend}%</span>}</p>
+                </div>
+                {rangeToggle}
+              </div>
+              <AreaChart key={range} current={m.cur.map((c) => ({ label: c.label, value: c.orders }))} previous={m.prev.map((c) => c.orders)} unit="orders" />
+            </section>
+            {problems.length > 0 && (
+              <section aria-label="Things that need attention">
+                <p className="text-sm font-semibold mb-2 px-1">Needs a look</p>
+                <ul className="flex gap-2 overflow-x-auto snap-x scroll-pl-3 -mx-3 px-3 pb-1 snap-row">
+                  {problems.map((p) => (
+                    <li key={p.text} className="snap-start shrink-0">
+                      <button onClick={onNavigateToOrders} className="k-card rounded-2xl px-3 py-2.5 flex items-center gap-2.5 min-w-[11rem] text-left">
+                        <p.icon className="w-5 h-5 k-warn shrink-0" />
+                        <span><span className="k-display text-xl font-bold k-warn block leading-none">{p.n}</span><span className="text-[11px] k-muted block mt-0.5 leading-tight">{p.text}</span></span>
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              </section>
+            )}
+          </div>
+          <section className="hidden md:grid grid-cols-2 xl:grid-cols-4 gap-3 md:gap-4" aria-label="Key numbers">
             <div className="k-card p-4 md:p-5">
               <div className="flex items-center gap-2 text-sm k-muted"><Layers className="w-4 h-4" /> Orders today</div>
               <div className="flex items-end justify-between mt-3 gap-2">
@@ -561,11 +601,11 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
               <p className="text-xs k-muted mt-2">{inr(m.codTotal)} still to collect on delivery</p>
             </div>
           </section>
-        )}
+        </>)}
 
         {tab === 'overview' && (
           <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
-            <section className="k-card p-5 xl:col-span-2">
+            <section className="k-card p-5 xl:col-span-2 max-md:hidden">
               <div className="flex items-start justify-between gap-3 flex-wrap mb-2">
                 <div>
                   <h3 className="k-display text-2xl font-bold">Orders per day</h3>

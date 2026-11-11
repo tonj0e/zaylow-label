@@ -182,23 +182,23 @@ export const TrackingView: React.FC<TrackingViewProps> = ({ orders, settings, on
   };
 
   return (
-    <div className="kdash min-h-full p-3 sm:p-5 md:p-7 select-none pb-24 md:pb-10">
+    <div className="kdash min-h-full p-4 sm:p-5 md:p-7 select-none pb-24 md:pb-10">
       <div className="space-y-5">
         <header className="k-rise flex flex-col md:flex-row md:items-end justify-between gap-4" style={{ ['--i' as string]: 0 }}>
           <div>
-            <h2 className="text-3xl sm:text-4xl font-bold leading-none k-display">Tracking and COD</h2>
+            <h2 className="text-2xl sm:text-4xl font-bold leading-none k-display">Tracking and COD</h2>
             <p className="text-sm k-muted mt-2">Which parcels have a tracking number, where they are, and how much COD is still to come in.</p>
           </div>
-          <div className="flex items-center gap-2 flex-wrap">
-            <div className="k-card p-1 flex" style={{ borderRadius: 999 }} role="group" aria-label="Courier">
+          <div className="flex items-center gap-2 flex-wrap max-md:grid max-md:grid-cols-2">
+            <div className="k-card p-1 flex max-md:col-span-2" style={{ borderRadius: 999 }} role="group" aria-label="Courier">
               {([['India Post', 'India Post'], ['ALL', 'All couriers']] as const).map(([id, label]) => (
-                <button key={id} onClick={() => setCourier(id)} aria-pressed={courier === id} className={`px-4 py-2 rounded-full text-sm font-semibold transition-colors ${courier === id ? 'k-btn-ink' : 'k-muted'}`}>{label}</button>
+                <button key={id} onClick={() => setCourier(id)} aria-pressed={courier === id} className={`px-4 py-2 rounded-full text-sm font-semibold transition-colors max-md:flex-1 ${courier === id ? 'k-btn-ink' : 'k-muted'}`}>{label}</button>
               ))}
             </div>
-            <button onClick={checkDelivery} disabled={checking} className="k-btn k-btn-lime px-4 py-2.5 text-sm" title="Ask India Post which shipped parcels have been delivered">
+            <button onClick={checkDelivery} disabled={checking} className="k-btn k-btn-lime px-4 py-3 text-sm max-md:col-span-2" title="Ask India Post which shipped parcels have been delivered">
               <RefreshCw className={`w-4 h-4 ${checking ? 'animate-spin' : ''}`} /> {checking ? 'Checking…' : 'Check delivery now'}
             </button>
-            <button onClick={() => setImporting(true)} className="k-btn k-btn-ink px-4 py-2.5 text-sm"><FileSpreadsheet className="w-4 h-4" /> Import India Post bookings</button>
+            <button onClick={() => setImporting(true)} className="k-btn k-btn-ink px-4 py-2.5 text-sm"><FileSpreadsheet className="w-4 h-4" /> <span className="md:hidden">Import</span><span className="max-md:hidden">Import India Post bookings</span></button>
             <button onClick={() => setEditingTemplate((v) => !v)} className="k-btn k-btn-ghost px-4 py-2.5 text-sm"><Settings2 className="w-4 h-4" /> WhatsApp message</button>
           </div>
         </header>
@@ -250,7 +250,7 @@ export const TrackingView: React.FC<TrackingViewProps> = ({ orders, settings, on
           </section>
         )}
 
-        <dl className="k-rise grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3 md:gap-4" style={{ ['--i' as string]: 1 }}>
+        <dl className="k-rise grid sm:grid-cols-2 xl:grid-cols-4 gap-3 md:gap-4 max-md:flex max-md:overflow-x-auto max-md:snap-x max-md:snap-mandatory max-md:-mx-4 max-md:px-4 max-md:pb-1 [&>div]:max-md:min-w-[72%] [&>div]:max-md:snap-start [&>div]:max-md:shrink-0" style={{ ['--i' as string]: 1 }}>
           {([
             ['COD still to collect', inr(toCollect), `${codCount(groups.onway)} COD parcels on the way`, IndianRupee, groups.onway.length ? (codCount(groups.onway) / groups.onway.length) * 100 : 0],
             ['COD collected', inr(collected), `${codCount(groups.delivered)} delivered COD orders · ${deliveredToday} delivered today`, PackageCheck, collected + toCollect > 0 ? (collected / (collected + toCollect)) * 100 : 0],

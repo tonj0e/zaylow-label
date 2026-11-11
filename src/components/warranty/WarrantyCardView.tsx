@@ -5,21 +5,8 @@ import { WarrantyCard } from './WarrantyCard';
 import { CARD_DIMENSIONS, type CardSizeOption } from '../../constants/warrantyCardSizes';
 import html2canvas from 'html2canvas';
 import jsPDF from 'jspdf';
-import {
-  Award,
-  Printer,
-  Download,
-  Search,
-  User,
-  Sparkles,
-  FileDown,
-  Sliders,
-  ChevronLeft,
-  ChevronRight,
-  ZoomIn,
-  CheckCircle2,
-  PackageCheck
-} from 'lucide-react';
+import { Check, ChevronLeft, ChevronRight, Download, Eye, FileDown, PackageCheck, PencilLine, Printer, Search, Users } from 'lucide-react';
+import { Switch } from '../common/Switch';
 
 interface WarrantyCardViewProps {
   orders?: Order[];
@@ -71,6 +58,14 @@ const calculateOneYearEndDate = (startDateStr: string): string => {
   return '';
 };
 
+// Old orders carry whatever name the product had when it was sold ("premium quality 2nd carton"). The card shows the proper product name.
+const cardProductName = (sold?: string): string => {
+  const n = (sold || '').toLowerCase();
+  if (/premium/.test(n)) return 'Period Cramps Relief Massager Premium';
+  if (/massager|massage/.test(n)) return 'Period Cramps Relief Massager';
+  return (sold || '').trim() || 'Period Cramps Relief Massager';
+};
+
 export const WarrantyCardView: React.FC<WarrantyCardViewProps> = ({
   orders: propOrders,
   initialOrder
@@ -79,9 +74,6 @@ export const WarrantyCardView: React.FC<WarrantyCardViewProps> = ({
   const [selectedOrder, setSelectedOrder] = useState<Order | null>(initialOrder || null);
   const [searchQuery, setSearchQuery] = useState('');
   const [onlyOneYearFilter, setOnlyOneYearFilter] = useState(true);
-
-  // Left-panel tab switcher: 'orders' | 'editor' | 'settings'
-  const [activeTab, setActiveTab] = useState<'orders' | 'editor' | 'settings'>('orders');
 
   // Form customization state
   const [customerName, setCustomerName] = useState(
@@ -105,7 +97,7 @@ export const WarrantyCardView: React.FC<WarrantyCardViewProps> = ({
   });
 
   const [productName, setProductName] = useState(
-    initialOrder?.item?.productName || 'Period Cramps Relief Massager'
+    cardProductName(initialOrder?.item?.productName)
   );
   const [orderId, setOrderId] = useState(initialOrder?.id || 'ZYL-10928');
   const [productImage, setProductImage] = useState('/warranty-product-belt.png');
@@ -114,6 +106,10 @@ export const WarrantyCardView: React.FC<WarrantyCardViewProps> = ({
   const [cardSize, setCardSize] = useState<CardSizeOption>('thermal');
   const [zoomLevel, setZoomLevel] = useState<'auto' | '85' | '100'>('auto');
   const [isExporting, setIsExporting] = useState(false);
+  const [notice, setNotice] = useState('');
+  const [tab, setTab] = useState<'customer' | 'card' | 'edit'>('card');
+  const [vw, setVw] = useState(() => (typeof window === 'undefined' ? 1280 : window.innerWidth));
+  useEffect(() => { const f = () => setVw(window.innerWidth); window.addEventListener('resize', f); return () => window.removeEventListener('resize', f); }, []);
 
   const printContainerRef = useRef<HTMLDivElement>(null);
 
@@ -197,9 +193,15 @@ export const WarrantyCardView: React.FC<WarrantyCardViewProps> = ({
     }
     setWarrantyPeriod(eDate || '01/10/2027');
 
-    setProductName(order.item?.productName || 'Period Cramps Relief Massager');
+    setProductName(cardProductName(order.item?.productName));
     setOrderId(order.id);
   };
+
+  // Never leave the sample card on screen: start on the first real customer
+  useEffect(() => {
+    if (!selectedOrder && !initialOrder && filteredOrders.length > 0) handleSelectOrder(filteredOrders[0]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [filteredOrders, selectedOrder, initialOrder]);
 
   // Cycle to previous / next order in filtered list
   const handlePrevOrder = () => {
@@ -262,7 +264,7 @@ export const WarrantyCardView: React.FC<WarrantyCardViewProps> = ({
 
   // High-Resolution Card Printing: Formatted for 4x6 Thermal Printer (Portrait Single Label)
   const handlePrintCard = async () => {
-    setIsExporting(true);
+    setIsExporting(true); setNotice('');
     try {
       const canvas = await captureCardCanvas(3);
       if (!canvas) return;
@@ -271,7 +273,7 @@ export const WarrantyCardView: React.FC<WarrantyCardViewProps> = ({
 
       const printWindow = window.open('', '_blank');
       if (!printWindow) {
-        alert('Pop-up was blocked. Please allow popups to print warranty cards.');
+        setNotice('Your browser blocked the print window. Allow pop-ups for this site, then press Print again.');
         return;
       }
 
@@ -279,7 +281,7 @@ export const WarrantyCardView: React.FC<WarrantyCardViewProps> = ({
         <!DOCTYPE html>
         <html>
           <head>
-            <title>ZAYLOW Warranty Card - ${customerName}</title>
+            <title>ZAYLOW Warranty Card - ${String(customerName).replace(/[&<>"']/g, '')}</title>
             <style>
               @page {
                 size: ${dim.widthMm}mm ${dim.heightMm}mm portrait;
@@ -319,7 +321,7 @@ export const WarrantyCardView: React.FC<WarrantyCardViewProps> = ({
       printWindow.document.close();
     } catch (err) {
       console.error('Print generation failed:', err);
-      alert('Failed to generate print preview.');
+      setNotice('Could not prepare the card for printing. Try again.');
     } finally {
       setIsExporting(false);
     }
@@ -345,7 +347,7 @@ export const WarrantyCardView: React.FC<WarrantyCardViewProps> = ({
       link.click();
     } catch (err) {
       console.error('Failed to export PNG:', err);
-      alert('Export failed. Please try again.');
+      setNotice('Could not make the PNG. Try again.');
     } finally {
       setIsExporting(false);
     }
@@ -370,489 +372,180 @@ export const WarrantyCardView: React.FC<WarrantyCardViewProps> = ({
       pdf.save(`ZAYLOW-WarrantyCard-${customerName.replace(/\s+/g, '_')}.pdf`);
     } catch (err) {
       console.error('Failed to export PDF:', err);
-      alert('PDF generation failed.');
+      setNotice('Could not make the PDF. Try again.');
     } finally {
       setIsExporting(false);
     }
   };
 
-  // Compute preview scaling factor
+  // Preview size: on a phone the card fits the screen width; on a desk it is large by default
   const scaleMultiplier = useMemo(() => {
     if (zoomLevel === '85') return 0.85;
     if (zoomLevel === '100') return 1.0;
-    return 0.80; // Fit to screen comfortably without clipping on standard laptop displays
-  }, [zoomLevel]);
+    const widthPx = CARD_DIMENSIONS[cardSize].widthMm * 3.7795;
+    if (vw < 768) return Math.min(1, (vw - 72) / widthPx);
+    return 0.9;
+  }, [zoomLevel, vw, cardSize]);
+
+  const dim = CARD_DIMENSIONS[cardSize] || CARD_DIMENSIONS.thermal;
+  const SIZES: { key: CardSizeOption; label: string; note: string }[] = [
+    { key: 'thermal', label: '4 × 6 inch label', note: '100 × 150 mm, thermal roll' },
+    { key: 'A6', label: 'A6 card', note: '105 × 148 mm, box insert' },
+    { key: 'compact', label: 'Compact', note: '85 × 125 mm' },
+  ];
+
+  const pick = (order: Order) => { handleSelectOrder(order); setTab('card'); };
+  const TABS = [
+    { key: 'customer' as const, label: 'Customer', icon: Users },
+    { key: 'card' as const, label: 'Card', icon: Eye },
+    { key: 'edit' as const, label: 'Edit', icon: PencilLine },
+  ];
+  const showOn = (k: typeof tab) => (tab === k ? '' : 'max-md:hidden');
+  const position = currentOrderIndex >= 0 ? `${currentOrderIndex + 1} of ${filteredOrders.length}` : '';
 
   return (
-    <div className="p-4 md:p-6 space-y-5 max-w-7xl mx-auto select-none pb-24">
-      {/* ── TOP HEADER & ACTIONS ── */}
-      <div className="flex flex-col xl:flex-row xl:items-center justify-between gap-4 border-b border-slate-200 dark:border-slate-800 pb-5">
+    <div className="p-4 md:p-6 space-y-4 md:space-y-5 max-w-[88rem] mx-auto pb-44 md:pb-8">
+      <header className="flex items-end justify-between gap-4 flex-wrap">
         <div>
-          <div className="flex items-center gap-2 mb-1">
-            <div className="w-8 h-8 rounded-lg bg-black text-white flex items-center justify-center font-bold">
-              <Award className="w-5 h-5" />
-            </div>
-            <h2 className="text-2xl font-black text-black dark:text-white tracking-tight flex items-center gap-2">
-              1-Year Warranty Card Studio
-            </h2>
-            <span className="text-[10px] font-black px-2.5 py-0.5 rounded-full bg-slate-900 text-white dark:bg-white dark:text-black">
-              Official Label
-            </span>
-          </div>
-          <p className="text-xs text-slate-500 dark:text-slate-400">
-            Official monochrome customer warranty card & packaging insert label for 1-Year Guarantee orders.
-          </p>
+          <h2 className="text-2xl font-bold k-display">Warranty cards</h2>
+          <p className="text-sm k-muted mt-1 max-md:hidden">Pick a customer on the left, check the card, then print it for the box.</p>
         </div>
-
-        {/* Selected Customer Quick-Cycle Banner & Main Actions */}
-        <div className="flex items-center gap-2.5 flex-wrap">
-          {selectedOrder && (
-            <div className="flex items-center gap-1.5 bg-slate-100 dark:bg-slate-800/80 px-2.5 py-1.5 rounded-xl border border-slate-200 dark:border-slate-700/60 text-xs">
-              <button
-                onClick={handlePrevOrder}
-                title="Previous 1-Year Order"
-                className="p-1 rounded-lg hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-600 dark:text-slate-300 transition"
-              >
-                <ChevronLeft className="w-3.5 h-3.5" />
-              </button>
-              <div className="px-1 text-center">
-                <span className="font-bold text-slate-900 dark:text-white block leading-tight max-w-[120px] truncate">
-                  {customerName}
-                </span>
-                <span className="font-mono text-[9px] text-slate-400 block">
-                  #{orderId.replace('ZYL-', '')}
-                </span>
-              </div>
-              <button
-                onClick={handleNextOrder}
-                title="Next 1-Year Order"
-                className="p-1 rounded-lg hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-600 dark:text-slate-300 transition"
-              >
-                <ChevronRight className="w-3.5 h-3.5" />
-              </button>
-            </div>
-          )}
-
-          <button
-            onClick={handleDownloadPNG}
-            disabled={isExporting}
-            className="px-3 py-2 rounded-xl bg-slate-100 dark:bg-slate-800 text-slate-800 dark:text-slate-200 hover:bg-slate-200 dark:hover:bg-slate-700 font-bold text-xs flex items-center gap-1.5 transition shadow-xs"
-          >
-            <Download className="w-3.5 h-3.5 text-black dark:text-white" />
-            <span>{isExporting ? 'Exporting...' : 'PNG (300 DPI)'}</span>
-          </button>
-
-          <button
-            onClick={handleDownloadPDF}
-            disabled={isExporting}
-            className="px-3 py-2 rounded-xl bg-slate-100 dark:bg-slate-800 text-slate-800 dark:text-slate-200 hover:bg-slate-200 dark:hover:bg-slate-700 font-bold text-xs flex items-center gap-1.5 transition shadow-xs"
-          >
-            <FileDown className="w-3.5 h-3.5 text-black dark:text-white" />
-            <span>PDF Card</span>
-          </button>
-
-          <button
-            onClick={handlePrintAndNext}
-            title="Print current card and move to next 1-year order in queue"
-            className="px-3.5 py-2 rounded-xl bg-slate-900 dark:bg-slate-800 hover:bg-slate-800 text-white font-bold text-xs flex items-center gap-1.5 transition border border-slate-700 shadow-sm"
-          >
-            <PackageCheck className="w-3.5 h-3.5 text-emerald-400" />
-            <span>Print & Next</span>
-          </button>
-
-          <button
-            onClick={handlePrintCard}
-            className="px-5 py-2 rounded-xl bg-black text-white hover:bg-slate-800 font-black text-xs flex items-center gap-2 transition shadow-lg active:scale-95 border border-slate-700"
-          >
-            <Printer className="w-4 h-4" />
-            <span>Print Official Label</span>
-          </button>
+        <div className="flex gap-2 flex-wrap max-md:hidden">
+          <button onClick={handleDownloadPNG} disabled={isExporting} className="k-btn k-btn-soft px-4 py-2.5 text-sm"><Download className="w-4 h-4" /> PNG</button>
+          <button onClick={handleDownloadPDF} disabled={isExporting} className="k-btn k-btn-soft px-4 py-2.5 text-sm"><FileDown className="w-4 h-4" /> PDF</button>
+          <button onClick={handlePrintAndNext} disabled={isExporting} title="Print this card, then move to the next customer" className="k-btn k-btn-outline-green px-4 py-2.5 text-sm"><PackageCheck className="w-4 h-4" /> Print and next</button>
+          <button onClick={handlePrintCard} disabled={isExporting} className="k-btn k-btn-lime px-5 py-2.5 text-sm"><Printer className="w-4 h-4" /> {isExporting ? 'Preparing…' : 'Print card'}</button>
         </div>
+      </header>
+
+      {notice && <p role="alert" className="text-sm font-medium rounded-2xl px-4 py-3" style={{ background: 'color-mix(in srgb, var(--bad) 12%, transparent)' }}>{notice}</p>}
+
+      {/* Phone: three tabs, one step on screen at a time */}
+      <div role="tablist" aria-label="Warranty card steps" className="md:hidden k-card p-1 flex" style={{ borderRadius: 999 }}>
+        {TABS.map((t) => (
+          <button key={t.key} role="tab" aria-selected={tab === t.key} onClick={() => setTab(t.key)} className={`flex-1 flex items-center justify-center gap-1.5 py-2.5 rounded-full text-sm font-semibold ${tab === t.key ? 'k-btn-lime' : 'k-muted'}`}>
+            <t.icon className="w-4 h-4" /> {t.label}
+          </button>
+        ))}
       </div>
 
-      {/* ── MAIN WORKSPACE GRID: TABBED CONTROLS (LEFT) + LIVE PREVIEW (RIGHT) ── */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
-        
-        {/* ── LEFT PANEL: TABBED STUDIO CONTROLLER ── */}
-        <div className="lg:col-span-5 bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-sm overflow-hidden flex flex-col">
-          
-          {/* Studio Navigation Tabs */}
-          <div className="grid grid-cols-3 border-b border-slate-100 dark:border-slate-800 bg-slate-50/60 dark:bg-slate-950/40 p-1.5 gap-1 text-xs font-bold">
-            <button
-              onClick={() => setActiveTab('orders')}
-              className={`py-2 px-2.5 rounded-xl transition flex items-center justify-center gap-1.5 ${
-                activeTab === 'orders'
-                  ? 'bg-white dark:bg-slate-800 text-black dark:text-white shadow-xs'
-                  : 'text-slate-500 hover:text-slate-800 dark:hover:text-slate-200'
-              }`}
-            >
-              <User className="w-3.5 h-3.5" />
-              <span>Orders ({oneYearCount})</span>
-            </button>
-
-            <button
-              onClick={() => setActiveTab('editor')}
-              className={`py-2 px-2.5 rounded-xl transition flex items-center justify-center gap-1.5 ${
-                activeTab === 'editor'
-                  ? 'bg-white dark:bg-slate-800 text-black dark:text-white shadow-xs'
-                  : 'text-slate-500 hover:text-slate-800 dark:hover:text-slate-200'
-              }`}
-            >
-              <Sparkles className="w-3.5 h-3.5" />
-              <span>Card Details</span>
-            </button>
-
-            <button
-              onClick={() => setActiveTab('settings')}
-              className={`py-2 px-2.5 rounded-xl transition flex items-center justify-center gap-1.5 ${
-                activeTab === 'settings'
-                  ? 'bg-white dark:bg-slate-800 text-black dark:text-white shadow-xs'
-                  : 'text-slate-500 hover:text-slate-800 dark:hover:text-slate-200'
-              }`}
-            >
-              <Sliders className="w-3.5 h-3.5" />
-              <span>Print & Size</span>
-            </button>
+      <div className="grid grid-cols-1 md:grid-cols-[19rem_minmax(0,1fr)] xl:grid-cols-[20rem_minmax(0,1fr)_20rem] gap-4 md:gap-5 items-start">
+        {/* 1. Customers */}
+        <section className={`k-card overflow-hidden min-w-0 md:sticky md:top-28 ${showOn('customer')}`} aria-label="Choose a customer">
+          <div className="p-4 pb-3 space-y-3">
+            <div className="flex items-center justify-between gap-3">
+              <h3 className="font-bold k-display">Customer</h3>
+              <p className="text-xs k-muted tabular-nums">{filteredOrders.length} of {oneYearCount}</p>
+            </div>
+            <div className="relative">
+              <Search className="w-4 h-4 k-muted absolute left-3.5 top-1/2 -translate-y-1/2" aria-hidden="true" />
+              <input value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} placeholder="Name, phone or order ID" aria-label="Search customers" className="k-field" style={{ paddingLeft: '2.4rem' }} />
+            </div>
+            <div className="flex items-center justify-between gap-3 text-sm">
+              <span className="font-medium">Only 1-year warranty orders</span>
+              <Switch on={onlyOneYearFilter} onChange={setOnlyOneYearFilter} label="Only 1-year warranty orders" />
+            </div>
           </div>
-
-          <div className="p-4 space-y-4">
-            {/* ── TAB 1: ORDER SELECTION ── */}
-            {activeTab === 'orders' && (
-              <div className="space-y-3">
-                <div className="flex items-center justify-between">
-                  <label className="flex items-center gap-2 cursor-pointer font-bold text-xs text-slate-700 dark:text-slate-300">
-                    <input
-                      type="checkbox"
-                      checked={onlyOneYearFilter}
-                      onChange={(e) => setOnlyOneYearFilter(e.target.checked)}
-                      className="w-3.5 h-3.5 rounded text-black focus:ring-0"
-                    />
-                    <span>1-Year Warranty Orders Only</span>
-                  </label>
-                  <span className="text-[10px] text-slate-400">
-                    {filteredOrders.length} matching
-                  </span>
-                </div>
-
-                <div className="relative">
-                  <Search className="w-3.5 h-3.5 absolute left-3 top-3 text-slate-400" />
-                  <input
-                    type="text"
-                    value={searchQuery}
-                    onChange={(e) => setSearchQuery(e.target.value)}
-                    placeholder="Search customer name, phone, or order ID..."
-                    className="w-full pl-9 pr-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl text-xs text-black dark:text-white focus:outline-none focus:border-black"
-                  />
-                </div>
-
-                {/* Orders Scrollable List */}
-                <div className="max-h-[380px] overflow-y-auto space-y-1.5 pr-1 divide-y divide-slate-100 dark:divide-slate-800/60">
-                  {filteredOrders.length === 0 ? (
-                    <div className="py-12 text-center text-xs text-slate-400">
-                      No orders match your search criteria.
-                    </div>
-                  ) : (
-                    filteredOrders.map((order) => {
-                      const isSelected = selectedOrder?.id === order.id;
-                      const is1Year = isOneYearOrder(order);
-                      return (
-                        <button
-                          key={order.id}
-                          onClick={() => handleSelectOrder(order)}
-                          className={`w-full text-left p-2.5 rounded-xl transition flex items-start justify-between gap-2 ${
-                            isSelected
-                              ? 'bg-slate-100 dark:bg-slate-800 border border-black/40 shadow-xs'
-                              : 'hover:bg-slate-50 dark:hover:bg-slate-800/40 border border-transparent'
-                          }`}
-                        >
-                          <div className="min-w-0">
-                            <div className="flex items-center gap-1.5">
-                              <span className="font-bold text-xs text-black dark:text-white truncate">
-                                {order.customer.name}
-                              </span>
-                              {is1Year && (
-                                <span className="px-1.5 py-0.2 rounded text-[8px] font-black bg-black text-white dark:bg-white dark:text-black">
-                                  1Y
-                                </span>
-                              )}
-                              {isSelected && (
-                                <CheckCircle2 className="w-3 h-3 text-black dark:text-white shrink-0" />
-                              )}
-                            </div>
-                            <p className="text-[10px] text-slate-500 dark:text-slate-400 truncate">
-                              {order.item?.productName || 'Massager'} • {order.customer?.city || 'India'}
-                            </p>
-                          </div>
-
-                          <div className="text-right shrink-0">
-                            <span className="font-mono text-[10px] font-bold text-slate-500 block">
-                              #{order.id.replace('ZYL-', '')}
-                            </span>
-                            <span className="text-[9px] text-slate-400">
-                              {new Date(order.createdAt).toLocaleDateString()}
-                            </span>
-                          </div>
-                        </button>
-                      );
-                    })
-                  )}
-                </div>
-              </div>
-            )}
-
-            {/* ── TAB 2: LIVE CARD DETAILS EDITOR ── */}
-            {activeTab === 'editor' && (
-              <div className="space-y-3 text-xs">
-                <div>
-                  <label className="block text-[10.5px] font-bold text-slate-500 uppercase tracking-wider mb-1">
-                    Customer Name
-                  </label>
-                  <input
-                    type="text"
-                    value={customerName}
-                    onChange={(e) => setCustomerName(e.target.value)}
-                    placeholder="e.g. Nashid"
-                    className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl font-bold text-black dark:text-white focus:outline-none focus:border-black"
-                  />
-                </div>
-
-                <div className="grid grid-cols-2 gap-2">
-                  <div>
-                    <div className="flex items-center justify-between mb-1">
-                      <label className="text-[10.5px] font-bold text-slate-500 uppercase tracking-wider">
-                        Purchase Date
-                      </label>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          const todayStr = formatDateToDDMMYYYY(new Date());
-                          setPurchaseDate(todayStr);
-                          const nextYr = calculateOneYearEndDate(todayStr);
-                          setWarrantyPeriod(nextYr);
-                        }}
-                        className="text-[9.5px] text-black dark:text-white font-bold hover:underline"
-                      >
-                        Today
-                      </button>
-                    </div>
-                    <input
-                      type="text"
-                      value={purchaseDate}
-                      onChange={(e) => {
-                        const val = e.target.value;
-                        setPurchaseDate(val);
-                        const nextYr = calculateOneYearEndDate(val);
-                        if (nextYr) {
-                          setWarrantyPeriod(nextYr);
-                        }
-                      }}
-                      placeholder="DD/MM/YYYY"
-                      className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl font-bold font-mono text-black dark:text-white focus:outline-none focus:border-black"
-                    />
-                  </div>
-
-                  <div>
-                    <div className="flex items-center justify-between mb-1">
-                      <label className="text-[10.5px] font-bold text-slate-500 uppercase tracking-wider">
-                        Warranty Period (End Date)
-                      </label>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          const nextYr = calculateOneYearEndDate(purchaseDate);
-                          if (nextYr) {
-                            setWarrantyPeriod(nextYr);
-                          }
-                        }}
-                        className="text-[9.5px] text-black dark:text-white font-bold hover:underline"
-                      >
-                        +1 Year
-                      </button>
-                    </div>
-                    <input
-                      type="text"
-                      value={warrantyPeriod}
-                      onChange={(e) => setWarrantyPeriod(e.target.value)}
-                      placeholder="DD/MM/YYYY"
-                      className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl font-bold font-mono text-black dark:text-white focus:outline-none focus:border-black"
-                    />
-                  </div>
-                </div>
-
-                <div>
-                  <div className="flex items-center justify-between mb-1">
-                    <label className="text-[10.5px] font-bold text-slate-500 uppercase tracking-wider">
-                      Product Name
-                    </label>
-                    <button
-                      type="button"
-                      onClick={() => setProductName('Period Cramps Relief Massager')}
-                      className="text-[9px] text-black dark:text-white bg-slate-100 dark:bg-slate-800 px-2 py-0.5 rounded font-bold"
-                    >
-                      Reset Default
-                    </button>
-                  </div>
-                  <input
-                    type="text"
-                    value={productName}
-                    onChange={(e) => setProductName(e.target.value)}
-                    className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl font-bold text-black dark:text-white focus:outline-none focus:border-black"
-                  />
-                </div>
-
-                <div className="grid grid-cols-2 gap-2">
-                  <div>
-                    <label className="block text-[10.5px] font-bold text-slate-500 uppercase tracking-wider mb-1">
-                      Order Reference
-                    </label>
-                    <input
-                      type="text"
-                      value={orderId}
-                      onChange={(e) => setOrderId(e.target.value)}
-                      className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl font-mono text-xs text-black dark:text-white focus:outline-none focus:border-black"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-[10.5px] font-bold text-slate-500 uppercase tracking-wider mb-1">
-                      Product Visual
-                    </label>
-                    <select
-                      value={productImage}
-                      onChange={(e) => setProductImage(e.target.value)}
-                      className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl text-xs text-black dark:text-white focus:outline-none focus:border-black"
-                    >
-                      <option value="/warranty-product-belt.png">Official Product Belt (Isolated)</option>
-                      <option value="/warranty-product.jpg">Original Design Photo</option>
-                      <option value="/warranty-product-alt.jpg">Studio Floral Edition</option>
-                    </select>
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {/* ── TAB 3: PRINT & SIZING SETTINGS ── */}
-            {activeTab === 'settings' && (
-              <div className="space-y-4 text-xs">
-                <div>
-                  <div className="flex items-center justify-between mb-2">
-                    <span className="text-[11px] font-bold uppercase tracking-wider text-slate-500 flex items-center gap-1.5">
-                      <Sliders className="w-3.5 h-3.5 text-black dark:text-white" />
-                      Label Print Dimensions
+          <ul className="max-h-[26rem] md:max-h-[calc(100vh-22rem)] overflow-y-auto border-t k-rule">
+            {filteredOrders.length === 0 ? (
+              <li className="py-10 px-5 text-center text-sm k-muted">No order matches that search.</li>
+            ) : filteredOrders.map((order) => {
+              const on = selectedOrder?.id === order.id;
+              return (
+                <li key={order.id} className="border-t k-rule first:border-t-0">
+                  <button onClick={() => pick(order)} aria-pressed={on} className="k-row w-full text-left px-4 py-3 flex items-center gap-3" style={on ? { background: 'var(--card2)', boxShadow: 'inset 3px 0 0 var(--lime)' } : undefined}>
+                    <span className="min-w-0 flex-1">
+                      <span className="flex items-center gap-1.5 font-semibold truncate">{order.customer.name}{on && <Check className="w-3.5 h-3.5 k-lime-text shrink-0" />}</span>
+                      <span className="block text-xs k-muted truncate">{order.customer?.city || order.item?.productName || 'Massager'}</span>
                     </span>
-                    <span className="text-[10px] font-bold text-emerald-600 bg-emerald-500/10 px-2 py-0.5 rounded-full">
-                      {CARD_DIMENSIONS[cardSize].widthMm} × {CARD_DIMENSIONS[cardSize].heightMm} mm
+                    <span className="text-right shrink-0">
+                      <span className="block text-xs font-mono font-semibold">{order.id.replace('ZYL-', '#')}</span>
+                      <span className="block text-xs k-muted">{new Date(order.createdAt).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })}</span>
                     </span>
-                  </div>
-
-                  <div className="grid grid-cols-3 gap-1.5">
-                    {(['thermal', 'A6', 'compact'] as CardSizeOption[]).map((sz) => (
-                      <button
-                        key={sz}
-                        onClick={() => setCardSize(sz)}
-                        className={`py-2.5 px-2 rounded-xl font-bold transition text-center ${
-                          cardSize === sz
-                            ? 'bg-black text-white shadow-md font-black dark:bg-white dark:text-black'
-                            : 'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700'
-                        }`}
-                      >
-                        <span className="block text-[11px]">
-                          {sz === 'thermal' ? '4×6" Label' : sz === 'A6' ? 'A6 Postcard' : 'Compact'}
-                        </span>
-                        <span className="block text-[8px] opacity-80 mt-0.5">
-                          {sz === 'thermal' ? 'H30C-lite (100×150)' : sz === 'A6' ? 'Box Insert' : '85×125 mm'}
-                        </span>
-                      </button>
-                    ))}
-                  </div>
-                </div>
-
-                <div className="p-3 bg-slate-50 dark:bg-slate-800/60 rounded-xl border border-slate-200 dark:border-slate-700 text-[10.5px] text-slate-600 dark:text-slate-300 space-y-1">
-                  <p className="font-bold text-black dark:text-white flex items-center gap-1.5">
-                    <Printer className="w-3.5 h-3.5" /> 4×6" Thermal Printing Ready:
-                  </p>
-                  <p>
-                    This label is formatted natively for your <strong>4×6" thermal label printer (H30C-lite)</strong> in standard <strong>Portrait</strong> orientation. It prints edge-to-edge with crisp monochrome thermal clarity.
-                  </p>
-                </div>
-              </div>
-            )}
-          </div>
-        </div>
-
-        {/* ── RIGHT PANEL: LIVE HIGH-FIDELITY PREVIEW ── */}
-        <div className="lg:col-span-7 flex flex-col items-center w-full">
-          <div className="w-full bg-slate-100/90 dark:bg-slate-900/60 p-4 md:p-6 rounded-3xl border border-slate-200 dark:border-slate-800 flex flex-col items-center shadow-inner">
-            
-            {/* Preview Stage Toolbar */}
-            <div className="flex items-center justify-between w-full gap-3 mb-4 border-b border-slate-200 dark:border-slate-800/80 pb-3 text-xs font-bold">
-              <div className="flex items-center gap-2">
-                <span className="text-black dark:text-white font-extrabold text-sm">Official Warranty Label</span>
-                <span className="text-[10px] text-slate-500 font-bold bg-white dark:bg-slate-800 px-2.5 py-1 rounded-xl border border-slate-200/80 dark:border-slate-700">
-                  {cardSize === 'thermal' ? '4×6" Thermal (100 × 150 mm)' : cardSize === 'A6' ? 'A6 (105 × 148 mm)' : 'Compact (85 × 125 mm)'}
-                </span>
-              </div>
-
-              {/* Zoom Scale Buttons */}
-              <div className="flex items-center gap-1 bg-white dark:bg-slate-800 p-1 rounded-xl border border-slate-200/80 dark:border-slate-700 text-[10px]">
-                <ZoomIn className="w-3 h-3 text-slate-400 ml-1" />
-                {(['auto', '85', '100'] as const).map((z) => (
-                  <button
-                    key={z}
-                    onClick={() => setZoomLevel(z)}
-                    className={`px-2 py-0.5 rounded-md font-bold uppercase transition ${
-                      zoomLevel === z
-                        ? 'bg-black text-white dark:bg-white dark:text-black'
-                        : 'text-slate-400 hover:text-slate-700'
-                    }`}
-                  >
-                    {z === 'auto' ? 'Fit' : `${z}%`}
                   </button>
-                ))}
-              </div>
-            </div>
+                </li>
+              );
+            })}
+          </ul>
+        </section>
 
-            {/* Live Rendered Card Container */}
-            <div className="w-full flex items-center justify-center p-2 min-h-[460px] overflow-visible">
-              <div
-                style={{
-                  width: `${Math.round((CARD_DIMENSIONS[cardSize]?.widthMm || 100) * 3.7795 * scaleMultiplier)}px`,
-                  height: `${Math.round((CARD_DIMENSIONS[cardSize]?.heightMm || 150) * 3.7795 * scaleMultiplier)}px`,
-                  position: 'relative'
-                }}
-              >
-                <div
-                  style={{
-                    transform: `scale(${scaleMultiplier})`,
-                    transformOrigin: 'top left',
-                    position: 'absolute',
-                    top: 0,
-                    left: 0
-                  }}
-                  className="bg-transparent rounded-2xl shadow-xl shrink-0"
-                >
-                  <WarrantyCard
-                    innerRef={printContainerRef}
-                    customerName={customerName}
-                    purchaseDate={purchaseDate}
-                    warrantyPeriod={warrantyPeriod}
-                    productName={productName}
-                    orderId={orderId}
-                    size={cardSize}
-                    productImage={productImage}
-                  />
-                </div>
-              </div>
+        {/* 2. The card, on a dark desk */}
+        <section className={`min-w-0 rounded-[28px] p-4 sm:p-6 rep-hero ${showOn('card')}`} style={{ backgroundImage: 'radial-gradient(rgba(255,255,255,.07) 1px, transparent 1px)', backgroundSize: '18px 18px' }} aria-label="Card preview">
+          <div className="flex items-center justify-between gap-3 flex-wrap mb-4">
+            <div role="radiogroup" aria-label="Paper size" className="flex gap-1 p-1 rounded-full" style={{ background: 'rgba(255,255,255,.1)' }}>
+              {SIZES.map((z) => {
+                const on = cardSize === z.key;
+                return <button key={z.key} role="radio" aria-checked={on} onClick={() => setCardSize(z.key)} title={z.note} className="px-3.5 py-1.5 rounded-full text-xs font-semibold" style={on ? { background: '#fff', color: '#0b0d0a' } : { opacity: 0.75 }}>{z.key === 'thermal' ? '4 × 6 in' : z.key === 'A6' ? 'A6' : 'Compact'}</button>;
+              })}
             </div>
-
-            {/* Footer Notice */}
-            <div className="mt-4 text-center max-w-md">
-              <p className="text-[11px] text-slate-500 dark:text-slate-400 leading-relaxed">
-                💡 <strong className="text-slate-700 dark:text-slate-300">Printing Note:</strong> Directly prints in Portrait orientation onto standard 4×6" (100 × 150 mm) thermal adhesive roll or box insert cardstock.
-              </p>
+            <div role="group" aria-label="Preview size" className="flex gap-1 p-1 rounded-full max-md:hidden" style={{ background: 'rgba(255,255,255,.1)' }}>
+              {(['auto', '85', '100'] as const).map((z) => (
+                <button key={z} onClick={() => setZoomLevel(z)} aria-pressed={zoomLevel === z} className="px-3 py-1.5 rounded-full text-xs font-semibold" style={zoomLevel === z ? { background: '#fff', color: '#0b0d0a' } : { opacity: 0.75 }}>{z === 'auto' ? 'Fit' : `${z}%`}</button>
+              ))}
             </div>
           </div>
-        </div>
+
+          <div className="w-full flex items-start justify-center overflow-x-auto md:overflow-visible min-h-[300px]">
+            <div style={{ width: `${Math.round(dim.widthMm * 3.7795 * scaleMultiplier)}px`, height: `${Math.round(dim.heightMm * 3.7795 * scaleMultiplier)}px`, position: 'relative' }}>
+              <div style={{ transform: `scale(${scaleMultiplier})`, transformOrigin: 'top left', position: 'absolute', top: 0, left: 0 }} className="bg-transparent rounded-2xl shadow-2xl shrink-0">
+                <WarrantyCard innerRef={printContainerRef} customerName={customerName} purchaseDate={purchaseDate} warrantyPeriod={warrantyPeriod} productName={productName} orderId={orderId} size={cardSize} productImage={productImage} />
+              </div>
+            </div>
+          </div>
+
+          <div className="flex items-center justify-center gap-3 mt-5">
+            <button onClick={handlePrevOrder} aria-label="Previous customer" className="w-11 h-11 rounded-full flex items-center justify-center" style={{ background: 'rgba(255,255,255,.14)' }}><ChevronLeft className="w-5 h-5" /></button>
+            <div className="text-center min-w-[9rem]">
+              <p className="font-semibold truncate max-w-[12rem]">{customerName}</p>
+              <p className="text-xs opacity-60 font-mono">{orderId.replace('ZYL-', '#')}{position && ` · ${position}`}</p>
+            </div>
+            <button onClick={handleNextOrder} aria-label="Next customer" className="w-11 h-11 rounded-full flex items-center justify-center" style={{ background: 'rgba(255,255,255,.14)' }}><ChevronRight className="w-5 h-5" /></button>
+          </div>
+        </section>
+
+        {/* 3. Edit what is printed */}
+        <section className={`k-card p-4 md:p-5 space-y-4 min-w-0 md:col-span-2 xl:col-span-1 xl:sticky xl:top-28 ${showOn('edit')}`} aria-label="Card details">
+          <h3 className="font-bold k-display">Edit the card</h3>
+          <div>
+            <label htmlFor="wc-name" className="k-label">Customer name</label>
+            <input id="wc-name" value={customerName} onChange={(e) => setCustomerName(e.target.value)} className="k-field font-semibold" autoComplete="off" />
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <div className="flex items-center justify-between mb-1.5"><label htmlFor="wc-start" className="k-label !mb-0">Bought on</label>
+                <button type="button" onClick={() => { const t = formatDateToDDMMYYYY(new Date()); setPurchaseDate(t); setWarrantyPeriod(calculateOneYearEndDate(t)); }} className="text-xs font-semibold underline">Today</button></div>
+              <input id="wc-start" value={purchaseDate} onChange={(e) => { const v = e.target.value; setPurchaseDate(v); const n = calculateOneYearEndDate(v); if (n) setWarrantyPeriod(n); }} placeholder="DD/MM/YYYY" className="k-field font-mono" />
+            </div>
+            <div>
+              <div className="flex items-center justify-between mb-1.5"><label htmlFor="wc-end" className="k-label !mb-0">Ends</label>
+                <button type="button" onClick={() => { const n = calculateOneYearEndDate(purchaseDate); if (n) setWarrantyPeriod(n); }} className="text-xs font-semibold underline">+1 year</button></div>
+              <input id="wc-end" value={warrantyPeriod} onChange={(e) => setWarrantyPeriod(e.target.value)} placeholder="DD/MM/YYYY" className="k-field font-mono" />
+            </div>
+          </div>
+          <div>
+            <div className="flex items-center justify-between mb-1.5"><label htmlFor="wc-product" className="k-label !mb-0">Product</label>
+              <button type="button" onClick={() => setProductName('Period Cramps Relief Massager')} className="text-xs font-semibold underline">Standard name</button></div>
+            <input id="wc-product" value={productName} onChange={(e) => setProductName(e.target.value)} className="k-field font-semibold" />
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div><label htmlFor="wc-order" className="k-label">Order number</label><input id="wc-order" value={orderId} onChange={(e) => setOrderId(e.target.value)} className="k-field font-mono" /></div>
+            <div><label htmlFor="wc-image" className="k-label">Picture</label>
+              <select id="wc-image" value={productImage} onChange={(e) => setProductImage(e.target.value)} className="k-field">
+                <option value="/warranty-product-belt.png">Product belt</option>
+                <option value="/warranty-product.jpg">Original photo</option>
+                <option value="/warranty-product-alt.jpg">Floral edition</option>
+              </select></div>
+          </div>
+          <p className="text-xs k-muted">{dim.widthMm} × {dim.heightMm} mm. Prints upright, edge to edge, on the 4 × 6 inch thermal printer.</p>
+        </section>
+      </div>
+
+      {/* Phone: print bar stays above the tab bar */}
+      <div className="md:hidden fixed left-3 right-3 z-30 flex gap-2 p-2 rounded-3xl k-card" style={{ bottom: 'calc(5.25rem + env(safe-area-inset-bottom))', boxShadow: '0 10px 30px -10px rgba(0,0,0,.35)' }}>
+        <button onClick={handlePrintCard} disabled={isExporting} className="k-btn k-btn-lime flex-1 py-3 text-sm"><Printer className="w-4 h-4" /> {isExporting ? 'Preparing…' : 'Print card'}</button>
+        <button onClick={handlePrintAndNext} disabled={isExporting} aria-label="Print and next customer" className="k-btn k-btn-outline-green w-12 h-12"><PackageCheck className="w-4 h-4" /></button>
+        <button onClick={handleDownloadPNG} disabled={isExporting} aria-label="Download PNG" className="k-btn k-btn-soft w-12 h-12"><Download className="w-4 h-4" /></button>
+        <button onClick={handleDownloadPDF} disabled={isExporting} aria-label="Download PDF" className="k-btn k-btn-soft w-12 h-12"><FileDown className="w-4 h-4" /></button>
       </div>
     </div>
   );

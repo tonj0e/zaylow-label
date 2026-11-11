@@ -1,9 +1,11 @@
 import { StrictMode, Component } from 'react'
 import type { ErrorInfo, ReactNode } from 'react'
 import { createRoot } from 'react-dom/client'
+import type { Root } from 'react-dom/client'
 import './index.css'
 import './styles/kdash.css'
 import { App } from './App.tsx'
+import { AuthGate } from './components/auth/AuthGate.tsx'
 
 /**
  * Global error boundary — catches any unhandled React render errors and
@@ -70,10 +72,13 @@ class ErrorBoundary extends Component<{ children: ReactNode }, { error: Error | 
   }
 }
 
-createRoot(document.getElementById('root')!).render(
+// Reuse one root when the dev server hot-reloads this file, instead of creating a second one on the same element
+const holder = window as unknown as { __zaylowRoot?: Root }
+const root = holder.__zaylowRoot ?? (holder.__zaylowRoot = createRoot(document.getElementById('root')!))
+root.render(
   <StrictMode>
     <ErrorBoundary>
-      <App />
+      <AuthGate><App /></AuthGate>
     </ErrorBoundary>
   </StrictMode>,
 )

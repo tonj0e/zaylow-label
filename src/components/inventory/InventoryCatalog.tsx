@@ -50,7 +50,7 @@ export const InventoryCatalog: React.FC<{ initialTab: Tab; autoFocusSearch?: boo
   const loading = firstLoad;
   const load = refresh;
 
-  useEffect(() => { if (autoFocusSearch) searchRef.current?.focus(); }, [autoFocusSearch]);
+  useEffect(() => { if (autoFocusSearch && window.matchMedia('(min-width: 768px)').matches) searchRef.current?.focus(); }, [autoFocusSearch]);
 
   const totalUnits = useMemo(() => cartons.reduce((s, c) => s + c.totalUnits, 0), [cartons]);
   const available = useMemo(() => stock.reduce((s, r) => s + (r.available || 0), 0), [stock]);

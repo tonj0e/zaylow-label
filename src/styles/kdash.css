@@ -1,6 +1,6 @@
 /* Kawasaki green and black theme, shared by the dashboard, inventory and label pages.
    Wrap a page root in .kdash. Dark mode follows the app's `.dark` class. */
-.kdash{--bg:#f0f2ee;--card:#ffffff;--card2:#eef1ea;--line:#dfe4da;--ink:#0b0d0a;--muted:#5d695f;--lime:#22c55e;--lime-text:#16a34a;--on-lime:#04210f;--warn:#a86f00;--bad:#c93b28;--tip:#0b0d0a;--tip-ink:#f4f6f2;
+.kdash{--bg:#f0f2ee;--card:#ffffff;--card2:#eef1ea;--line:#dfe4da;--ink:#0b0d0a;--muted:#5d695f;--lime:#22c55e;--lime-text:#15803d;--on-lime:#04210f;--warn:#a86f00;--bad:#c93b28;--tip:#0b0d0a;--tip-ink:#f4f6f2;
   background:var(--bg);color:var(--ink);font-family:'DM Sans','Inter',system-ui,sans-serif}
 .dark .kdash{--bg:#0b0d0a;--card:#15181a;--card2:#1d2123;--line:#2a2f31;--ink:#f4f6f2;--muted:#8d9690;--lime-text:#4ade80;--warn:#f5a623;--bad:#ff6a55;--tip:#f4f6f2;--tip-ink:#0b0d0a}
 .kdash .k-display{font-family:'DM Sans','Inter',system-ui,sans-serif;font-weight:700;letter-spacing:-.02em}
@@ -56,8 +56,8 @@
 /* floating nav rail: expands with CSS only, so hovering never re-renders React */
 .kdash .rail{width:64px;transition:width .2s cubic-bezier(.22,1,.36,1);will-change:width}
 .kdash .rail:not(.rail-closed):hover,.kdash .rail:not(.rail-closed):has(:focus-visible){width:244px}
-.kdash .rail .rail-fade{opacity:0;transition:opacity .15s}
-.kdash .rail:not(.rail-closed):hover .rail-fade,.kdash .rail:not(.rail-closed):has(:focus-visible) .rail-fade,.kdash .rail.rail-open .rail-fade{opacity:1}
+.kdash .rail .rail-fade{opacity:0;visibility:hidden;transition:opacity .15s,visibility 0s}
+.kdash .rail:not(.rail-closed):hover .rail-fade,.kdash .rail:not(.rail-closed):has(:focus-visible) .rail-fade,.kdash .rail.rail-open .rail-fade{opacity:1;visibility:visible;transition:opacity .15s .1s,visibility 0s .2s}
 .kdash .rail .rail-count,.kdash .rail .rail-sub{display:none}
 .kdash .rail:not(.rail-closed):hover .rail-count,.kdash .rail:not(.rail-closed):has(:focus-visible) .rail-count,.kdash .rail.rail-open .rail-count{display:inline-block}
 .kdash .rail:not(.rail-closed):hover .rail-sub,.kdash .rail:not(.rail-closed):has(:focus-visible) .rail-sub,.kdash .rail.rail-open .rail-sub{display:block}
@@ -79,3 +79,90 @@
 .kdash .k-btn-outline-green{background:transparent;color:var(--lime-text);border:1px solid color-mix(in srgb,var(--lime) 55%,transparent);transition:background .15s,color .15s,border-color .15s}
 .kdash .k-btn-outline-green:hover{background:var(--lime);color:var(--on-lime);border-color:var(--lime)}
 .kdash .k-row:hover{box-shadow:inset 2px 0 0 var(--lime)}
+
+/* ── Theme bridge ─────────────────────────────────────────────────────────────
+   Pages not yet rewritten use Tailwind slate/emerald utilities. Inside .kdash these map onto the
+   same tokens as the rest of the app, so light and dark mode, borders and the green all match.
+   Doubled .kdash raises specificity above Tailwind's dark: variants. */
+.kdash.kdash :is([class~="bg-white"],[class~="bg-white/5"]){background-color:var(--card)}
+.kdash.dark.kdash :is([class~="dark:bg-slate-900"],[class~="dark:bg-slate-900/50"]){background-color:var(--card)}
+.kdash.kdash :is([class~="bg-slate-50"],[class~="bg-slate-100"],[class~="bg-slate-200"]){background-color:var(--card2)}
+.kdash.dark.kdash :is([class~="dark:bg-slate-950"],[class~="dark:bg-slate-800"],[class~="dark:bg-slate-800/50"],[class~="dark:bg-slate-700"]){background-color:var(--card2)}
+.kdash.kdash :is([class*="bg-slate-950/"],[class*="bg-slate-50/"]):is(.fixed){background-color:rgba(0,0,0,.6)}
+.kdash.kdash :is([class~="border-slate-200"],[class~="border-slate-300"],[class~="border-slate-700"],[class~="border-slate-800"],[class~="border-gray-200"]){border-color:var(--line)}
+.kdash.dark.kdash :is([class~="dark:border-slate-700"],[class~="dark:border-slate-800"]){border-color:var(--line)}
+.kdash.kdash :is([class~="divide-slate-200"]) > :not([hidden]) ~ :not([hidden]){border-color:var(--line)}
+.kdash.dark.kdash :is([class~="dark:divide-slate-800"]) > :not([hidden]) ~ :not([hidden]){border-color:var(--line)}
+.kdash.kdash :is([class~="text-black"]):not(button[class*="bg-emerald"]):not([class*="bg-red"]):not([class*="bg-blue"]):not([class*="bg-orange"]){color:var(--ink)}
+.kdash.dark.kdash :is([class~="dark:text-white"]):not(button[class*="bg-emerald"]):not([class*="bg-red"]):not([class*="bg-blue"]):not([class*="bg-orange"]){color:var(--ink)}
+.kdash.kdash :is([class~="text-slate-300"],[class~="text-slate-400"],[class~="text-slate-500"],[class~="text-slate-600"]){color:var(--muted)}
+.kdash.dark.kdash :is([class~="dark:text-slate-400"],[class~="dark:text-slate-500"],[class~="dark:text-slate-300"]){color:var(--muted)}
+.kdash.kdash :is([class~="text-emerald-400"],[class~="text-emerald-500"],[class~="text-emerald-600"],[class~="text-emerald-700"]){color:var(--lime-text)}
+.kdash.dark.kdash :is([class~="dark:text-emerald-400"]){color:var(--lime-text)}
+.kdash.kdash :is([class~="text-red-300"],[class~="text-red-400"],[class~="text-red-500"],[class~="text-red-600"]){color:var(--bad)}
+.kdash.kdash :is([class~="text-orange-400"],[class~="text-amber-400"],[class~="text-amber-500"],[class~="text-yellow-500"]){color:var(--warn)}
+.kdash.kdash :is([class~="bg-emerald-500"],[class~="bg-emerald-600"],[class~="bg-emerald-400"]){background-color:var(--lime);color:var(--on-lime)}
+.kdash.kdash :is([class*="bg-emerald-500/"],[class*="bg-emerald-400/"],[class*="bg-emerald-900/"]){background-color:color-mix(in srgb,var(--lime) 14%,transparent)}
+.kdash.kdash :is([class*="border-emerald-500"],[class*="border-emerald-400"]){border-color:color-mix(in srgb,var(--lime) 45%,transparent)}
+.kdash.kdash :is([class*="bg-red-900/"],[class*="bg-red-500/"],[class*="bg-red-100"],[class~="bg-red-50"]){background-color:color-mix(in srgb,var(--bad) 13%,transparent)}
+.kdash.kdash :is([class*="border-red-8"],[class*="border-red-5"],[class*="border-red-2"]){border-color:color-mix(in srgb,var(--bad) 40%,transparent)}
+.kdash.kdash :is([class*="bg-orange-500/"],[class*="bg-amber-500/"],[class*="bg-yellow-500/"]){background-color:color-mix(in srgb,var(--warn) 15%,transparent)}
+.kdash.kdash :is([class*="bg-blue-500/"],[class*="bg-indigo-500/"],[class*="bg-purple-500/"],[class*="bg-sky-500/"]){background-color:var(--card2)}
+.kdash.kdash :is([class~="text-blue-400"],[class~="text-indigo-400"],[class~="text-purple-400"],[class~="text-sky-400"],[class~="text-blue-500"],[class~="text-blue-600"]){color:var(--ink)}
+.kdash.kdash :is([class~="bg-blue-500"],[class~="bg-blue-600"],[class~="bg-indigo-500"],[class~="bg-indigo-600"],[class~="bg-purple-600"]){background-color:var(--ink);color:var(--bg)}
+.kdash.kdash :is(input:not([type=checkbox]):not([type=radio]):not([type=file]),select,textarea):not(.k-field){background-color:var(--card2);border-color:var(--line);color:var(--ink);border-radius:14px}
+.kdash.kdash :is(input,select,textarea):not(.k-field):focus{outline:none;border-color:var(--lime);box-shadow:0 0 0 3px color-mix(in srgb,var(--lime) 28%,transparent)}
+.kdash.kdash :is(input,textarea)::placeholder{color:var(--muted);opacity:.7}
+.kdash.kdash :is([class~="rounded-2xl"],[class~="rounded-xl"]):is([class~="bg-white"],[class~="dark:bg-slate-900"]){border-radius:20px}
+.kdash.kdash :is([class~="shadow-2xl"],[class~="shadow-xl"],[class~="shadow-lg"]){box-shadow:0 18px 50px -20px rgba(0,0,0,.45)}
+.kdash.kdash table thead tr,.kdash.kdash table thead th{background-color:var(--card2);color:var(--muted)}
+.kdash.kdash table tbody tr{border-color:var(--line)}
+.kdash.kdash table tbody tr:hover{background-color:color-mix(in srgb,var(--card2) 70%,transparent)}
+.kdash.kdash button:not(.k-btn){transition:background-color .15s,color .15s,border-color .15s,transform .15s}
+.kdash.kdash button:not(.k-btn):active{transform:scale(.98)}
+.kdash.kdash :is([class~="text-slate-700"],[class~="text-slate-800"],[class~="text-slate-900"],[class~="text-gray-900"],[class~="text-gray-800"]){color:var(--ink)}
+.kdash.kdash :is([class~="text-gray-500"],[class~="text-gray-600"],[class~="text-gray-400"]){color:var(--muted)}
+.kdash.kdash :is([class~="bg-gray-50"],[class~="bg-gray-100"]){background-color:var(--card2)}
+
+/* every checkbox and radio in the app uses the same green */
+.kdash input[type="checkbox"],.kdash input[type="radio"],.kdash input[type="range"]{accent-color:var(--lime)}
+/* tinted gradients from the old pages become flat surfaces */
+.kdash.kdash [class*="bg-gradient-to"]{background-image:none;background-color:var(--card)}
+.kdash.kdash [class*="border-blue-"],.kdash.kdash [class*="border-purple-"],.kdash.kdash [class*="border-pink-"],.kdash.kdash [class*="border-sky-"],.kdash.kdash [class*="border-amber-"],.kdash.kdash [class*="border-orange-"]{border-color:var(--line)}
+.kdash.kdash [class*="shadow-emerald"],.kdash.kdash [class*="shadow-blue"],.kdash.kdash [class*="shadow-amber"],.kdash.kdash [class*="shadow-purple"],.kdash.kdash [class*="shadow-pink"]{box-shadow:none}
+
+/* translucent slate washes from the old pages follow the card surface */
+.kdash.dark.kdash [class*="bg-slate-800/"],.kdash.dark.kdash [class*="bg-slate-900/"]{background-color:color-mix(in srgb,var(--card2) 60%,transparent)}
+
+/* short screens: tighter rail so every destination fits without scrolling (900px tall and up to ~1000px) */
+@media (min-width:768px) and (max-height:1000px){
+  .kdash .rail-btn{height:2rem}
+  .kdash .rail-icon{height:2rem}
+  .kdash .rail-group{margin-top:.35rem}
+}
+
+/* Reports hero: the one inverted surface on the page (black in light mode, white in dark mode) */
+.kdash .rep-hero{background:var(--ink);color:var(--bg);--hl:#4ade80;--hl-soft:rgba(74,222,128,.18);--hero-muted:rgba(244,246,242,.62);border-radius:28px}
+.dark.kdash .rep-hero,.dark .kdash .rep-hero{--hl:#15803d;--hl-soft:rgba(21,128,61,.14);--hero-muted:rgba(11,13,10,.58)}
+.kdash .rep-hero .rep-muted{color:var(--hero-muted)}
+
+/* ── Phones (under 768px): calmer type and spacing, and stat rows you can swipe ───────────── */
+@media (max-width: 767px) {
+  .kdash main [role="tab"], .kdash main .k-btn, .kdash main select { min-height: 2.5rem; }
+  .kdash main button[aria-pressed] { min-height: 2.5rem; }
+  .kdash main .text-6xl { font-size: 2.7rem; line-height: 1; }
+  .kdash main .text-5xl { font-size: 2.2rem; line-height: 1; }
+  .kdash main .k-card.p-6, .kdash main .k-card2.p-6 { padding: 1.1rem; }
+  .kdash main .k-card.p-5, .kdash main .k-card2.p-5 { padding: 1rem; }
+  /* hide the scroll bar on swipeable rows, keep the swipe */
+  .kdash main [class*="snap-x"], .kdash main [class*="snap-row"] { scrollbar-width: none; }
+  .kdash main [class*="snap-x"]::-webkit-scrollbar, .kdash main [class*="snap-row"]::-webkit-scrollbar { display: none; }
+  /* touch targets: nothing the finger has to hit is smaller than 40px */
+  .kdash main .k-chip { padding: .55rem .95rem; min-height: 2.5rem; display: inline-flex; align-items: center; }
+  .kdash main select.k-field, .kdash main input.k-field { min-height: 2.75rem; }
+  .kdash main .k-btn.w-7, .kdash main .k-btn.w-8, .kdash main .k-btn.w-9 { min-width: 2.5rem; }
+  .kdash main .k-btn.h-7, .kdash main .k-btn.h-8, .kdash main .k-btn.h-9 { min-height: 2.5rem; }
+  /* small text buttons and boxes keep their look but get a finger-sized invisible touch area */
+  .kdash main button:not(.k-btn):not(.k-chip):not([class*="absolute"]):not([class*="fixed"]):not([class*="sticky"]) { position: relative; }
+  .kdash main button:not(.k-btn):not(.k-chip):not([class*="absolute"]):not([class*="fixed"]):not([class*="sticky"])::after { content: ''; position: absolute; inset: -0.5rem -0.4rem; }
+}

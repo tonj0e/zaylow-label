@@ -1,6 +1,10 @@
-import React, { useState, useEffect } from 'react';
-import { Loader2, Package, ArrowRight, Trash2, Search, RefreshCw, ChevronLeft } from 'lucide-react';
+import React, { useCallback, useMemo, useRef, useState } from 'react';
+import { Check, ChevronLeft, ChevronRight, Combine, Loader2, Package, Pencil, RefreshCw, Search, Trash2, X } from 'lucide-react';
 import { DataService } from '../../services/dataService';
+import { useCached } from '../../hooks/useCached';
+import { CACHE } from '../../services/prefetch';
+import { fetchCached } from '../../services/swrCache';
+import { PriceService, priceKey, type PriceMap } from '../../services/priceService';
 
 interface Product {
   id: string;
@@ -17,252 +21,373 @@ interface Product {
   updated_at: string;
 }
 
-// Color palette cycling for category cards
-const CARD_COLORS = [
-  { bg: 'from-pink-500/20 to-rose-500/10',    border: 'border-pink-500/30',   text: 'text-pink-400',   count: 'text-pink-400'   },
-  { bg: 'from-blue-500/20 to-cyan-500/10',    border: 'border-blue-500/30',   text: 'text-blue-400',   count: 'text-blue-400'   },
-  { bg: 'from-amber-500/20 to-yellow-500/10', border: 'border-amber-500/30',  text: 'text-amber-400',  count: 'text-amber-400'  },
-  { bg: 'from-emerald-500/20 to-teal-500/10', border: 'border-emerald-500/30',text: 'text-emerald-400',count: 'text-emerald-400'},
-  { bg: 'from-purple-500/20 to-violet-500/10',border: 'border-purple-500/30', text: 'text-purple-400', count: 'text-purple-400' },
-  { bg: 'from-orange-500/20 to-red-500/10',   border: 'border-orange-500/30', text: 'text-orange-400', count: 'text-orange-400' },
-];
+interface Carton { id: string; location: string | null }
 
-// Product emoji icons cycling
-const PRODUCT_ICONS = ['📦', '🛍️', '🎁', '🧴', '🔧', '💊', '👕', '🧸', '🖥️', '🎮', '🏠', '⚡'];
+const PAGE_SIZE = 10;
+const shortCode = (id: string) => id.slice(-6).toUpperCase();
+const keyOf = (name: string) => name.trim().toLowerCase().replace(/\s+/g, ' ');
 
-function getStatusStyle(status: string) {
-  switch (status) {
-    case 'In Stock':  return 'bg-emerald-500/20 text-emerald-400';
-    case 'Reserved':  return 'bg-amber-500/20 text-amber-400';
-    case 'Packed':    return 'bg-blue-500/20 text-blue-400';
-    case 'Shipped':   return 'bg-purple-500/20 text-purple-400';
-    case 'Delivered': return 'bg-green-500/20 text-green-400';
-    default:          return 'bg-red-500/20 text-red-400';
+type Bucket = 'In Stock' | 'Reserved' | 'Packed' | 'Shipped' | 'Delivered' | 'Returned' | 'Other';
+const BUCKETS: Bucket[] = ['In Stock', 'Reserved', 'Packed', 'Shipped', 'Delivered', 'Returned', 'Other'];
+const bucketOf = (status: string): Bucket => (BUCKETS.includes(status as Bucket) ? (status as Bucket) : 'Other');
+
+const BUCKET_COLOR: Record<Bucket, string> = {
+  'In Stock': 'var(--lime)',
+  Reserved: 'var(--warn)',
+  Packed: 'var(--muted)',
+  Shipped: 'color-mix(in srgb, var(--lime) 62%, var(--card))',
+  Delivered: 'color-mix(in srgb, var(--lime) 38%, var(--card))',
+  Returned: 'color-mix(in srgb, var(--bad) 60%, var(--card))',
+  Other: 'var(--bad)',
+};
+
+const pillStyle = (status: string): React.CSSProperties => {
+  switch (bucketOf(status)) {
+    case 'In Stock': return { background: 'color-mix(in srgb, var(--lime) 18%, transparent)', color: 'var(--lime-text)' };
+    case 'Reserved': return { background: 'color-mix(in srgb, var(--warn) 16%, transparent)', color: 'var(--warn)' };
+    case 'Shipped':
+    case 'Delivered': return { background: 'var(--lime)', color: 'var(--on-lime)' };
+    case 'Packed': return { background: 'var(--card2)', color: 'var(--ink)' };
+    default: return { background: 'color-mix(in srgb, var(--bad) 15%, transparent)', color: 'var(--bad)' };
   }
-}
+};
+
+/** 1 2 3 … 7: first and last page, plus the pages next to the current one. */
+const pageList = (current: number, last: number): (number | '…')[] => {
+  const keep = new Set([1, last, current - 1, current, current + 1].filter((n) => n >= 1 && n <= last));
+  const out: (number | '…')[] = [];
+  let prev = 0;
+  [...keep].sort((a, b) => a - b).forEach((n) => { if (n - prev > 1) out.push('…'); out.push(n); prev = n; });
+  return out;
+};
+
+const skuNum = (p: Product) => parseInt((p.sku || '').replace(/\D+/g, '') || '0', 10);
+
+interface Group { key: string; name: string; items: Product[]; counts: Record<Bucket, number> }
 
 export const ProductsView = () => {
-  const [products, setProducts] = useState<Product[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [searchTerm, setSearchTerm] = useState('');
-  const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
-  const [filterStatus, setFilterStatus] = useState('all');
+  const productsC = useCached<Product[]>(CACHE.products.key, CACHE.products.fetch);
+  const cartonsC = useCached<Carton[]>(CACHE.cartons.key, CACHE.cartons.fetch);
+  const products = useMemo(() => productsC.data ?? [], [productsC.data]);
+  const cartons = useMemo(() => cartonsC.data ?? [], [cartonsC.data]);
+  const loading = productsC.loading || cartonsC.loading;
+  const [search, setSearch] = useState('');
+  const [selectedKey, setSelectedKey] = useState<string | null>(null);
+  const [filter, setFilter] = useState<Bucket | 'all'>('all');
+  const [unitSearch, setUnitSearch] = useState('');
+  const [page, setPage] = useState(1);
+  const [confirmId, setConfirmId] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState(false);
+  const detailRef = useRef<HTMLDivElement>(null);
+  const pricesC = useCached<{ prices: PriceMap; shared: boolean }>(CACHE.prices.key, CACHE.prices.fetch);
+  const [editPrice, setEditPrice] = useState<string | null>(null);
+  const [priceNote, setPriceNote] = useState('');
+  const [combine, setCombine] = useState(false);
+  const [picked, setPicked] = useState<Set<string>>(new Set());
+  const [target, setTarget] = useState('');
+  const [combineConfirm, setCombineConfirm] = useState(false);
+  const [combining, setCombining] = useState(false);
+  const [combineNote, setCombineNote] = useState<{ ok: boolean; text: string } | null>(null);
 
-  useEffect(() => { loadProducts(); }, []);
-
-  const loadProducts = async () => {
-    setLoading(true);
-    try { setProducts(await DataService.getProducts()); }
+  const load = useCallback(async () => {
+    try { await Promise.all([productsC.refresh(), cartonsC.refresh()]); }
     catch (err) { console.error(err); }
-    finally { setLoading(false); }
-  };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
-  const handleDeleteProduct = async (id: string) => {
-    if (!window.confirm('Delete this product?')) return;
-    await DataService.deleteProduct(id);
-    await loadProducts();
-  };
-
-  // Group all products by product_name
-  const categories = React.useMemo(() => {
-    const map: Record<string, Product[]> = {};
-    products.forEach(p => {
-      const key = p.product_name;
-      if (!map[key]) map[key] = [];
-      map[key].push(p);
+  const groups = useMemo<Group[]>(() => {
+    const map = new Map<string, Group>();
+    products.forEach((p) => {
+      const key = keyOf(p.product_name || 'Unnamed product');
+      const g = map.get(key) || { key, name: (p.product_name || 'Unnamed product').trim(), items: [], counts: { 'In Stock': 0, Reserved: 0, Packed: 0, Shipped: 0, Delivered: 0, Returned: 0, Other: 0 } };
+      g.items.push(p); g.counts[bucketOf(p.status)] += 1;
+      map.set(key, g);
     });
-    return Object.entries(map).map(([name, items]) => ({ name, items }));
+    return [...map.values()].sort((a, b) => b.items.length - a.items.length);
   }, [products]);
 
-  // Filtered categories for the search
-  const filteredCategories = categories.filter(c =>
-    c.name.toLowerCase().includes(searchTerm.toLowerCase())
-  );
+  const visibleGroups = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    return groups.filter((g) => !q || g.name.toLowerCase().includes(q) || g.items.some((p) => (p.sku || '').toLowerCase().includes(q)));
+  }, [groups, search]);
 
-  // Products shown when a category is selected
-  const categoryProducts = selectedCategory
-    ? products.filter(p =>
-        p.product_name === selectedCategory &&
-        (filterStatus === 'all' || p.status === filterStatus)
-      )
-    : [];
+  const selected = groups.find((g) => g.key === selectedKey) || visibleGroups[0] || null;
 
-  // ── Category Grid View ─────────────────────────────────────
-  if (!selectedCategory) {
-    return (
-      <div className="p-4 md:p-6 space-y-4 md:space-y-6 pb-24 md:pb-6 max-w-7xl mx-auto">
-      {/* Header */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-        <div>
-          <h2 className="text-2xl font-black text-black dark:text-white tracking-tight">Products</h2>
-          <p className="text-xs text-black dark:text-white mt-1">
-            Total Products:{' '}
-            <span className="text-emerald-400 font-bold">{filteredCategories.length} {filteredCategories.length === 1 ? 'Category' : 'Categories'}</span>
-          </p>
-        </div>
-        <div className="flex items-center gap-2 md:gap-3 w-full md:w-auto">
-          <div className="relative flex-1 md:flex-none">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 dark:text-slate-500" />
-            <input
-              value={searchTerm}
-              onChange={e => setSearchTerm(e.target.value)}
-              placeholder="Search Product..."
-              className="pl-9 pr-3 py-2.5 md:py-2 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl text-black dark:text-white text-xs focus:outline-none focus:border-emerald-500 w-full md:w-48"
-            />
-          </div>
-          <button onClick={loadProducts} className="flex items-center justify-center gap-1.5 px-3 py-2.5 md:py-2 rounded-xl bg-slate-100 dark:bg-slate-800 text-black dark:text-white text-xs font-bold hover:bg-slate-200 dark:bg-slate-700 transition">
-            <RefreshCw className="w-4 h-4 md:w-3.5 md:h-3.5" /> <span className="hidden md:inline">Refresh</span>
-          </button>
-        </div>
-      </div>
+  const cartonName = useMemo(() => {
+    const m = new Map<string, string>();
+    cartons.forEach((c) => m.set(c.id, c.location || shortCode(c.id)));
+    return m;
+  }, [cartons]);
 
-        {/* Cards Grid — 3 per row */}
-        {loading ? (
-          <div className="text-center py-20"><Loader2 className="w-8 h-8 animate-spin mx-auto text-emerald-400" /></div>
-        ) : filteredCategories.length === 0 ? (
-          <div className="text-center py-20">
-            <Package className="w-12 h-12 mx-auto mb-3 text-slate-700" />
-            <p className="text-black dark:text-white font-medium">No products found</p>
-            <p className="text-xs text-slate-600 mt-1">Add products via the Cartons page</p>
-          </div>
-        ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            {filteredCategories.map(({ name, items }, idx) => {
-              const color = CARD_COLORS[idx % CARD_COLORS.length];
-              const icon = PRODUCT_ICONS[idx % PRODUCT_ICONS.length];
-              const inStock = items.filter(p => p.status === 'In Stock').length;
-              return (
-                <div
-                  key={name}
-                  className={`relative bg-gradient-to-br ${color.bg} border ${color.border} rounded-2xl p-5 overflow-hidden hover:scale-[1.02] transition-all duration-200 cursor-pointer group`}
-                >
-                  {/* Background box icon */}
-                  <div className="absolute -bottom-4 -right-4 text-8xl opacity-10 select-none">📦</div>
+  const units = useMemo(() => {
+    if (!selected) return [];
+    const q = unitSearch.trim().toLowerCase();
+    return selected.items
+      .filter((p) => (filter === 'all' || bucketOf(p.status) === filter) && (!q || [p.sku, p.customer_name, p.order_id, p.id].some((v) => v?.toLowerCase().includes(q))))
+      .sort((a, b) => skuNum(a) - skuNum(b) || new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
+  }, [selected, filter, unitSearch]);
 
-                  {/* Icon + Name */}
-                  <div className="flex items-start gap-3 mb-3">
-                    <div className={`w-10 h-10 rounded-xl bg-white dark:bg-slate-900/60 flex items-center justify-center text-xl flex-shrink-0`}>
-                      {icon}
-                    </div>
-                    <div>
-                      <h3 className="text-sm font-bold text-black dark:text-white leading-tight">{name}</h3>
-                      <p className="text-xs text-black dark:text-white mt-0.5">{inStock} In Stock</p>
-                    </div>
-                  </div>
+  const lastPage = Math.max(1, Math.ceil(units.length / PAGE_SIZE));
+  const current = Math.min(page, lastPage);
+  const rows = units.slice((current - 1) * PAGE_SIZE, current * PAGE_SIZE);
 
-                  {/* Count */}
-                  <div className={`text-4xl font-black ${color.count} mb-0.5`}>{items.length}</div>
-                  <p className="text-xs text-black dark:text-white mb-4">Products</p>
+  const skuRange = useMemo(() => {
+    if (!selected) return '';
+    const withSku = selected.items.filter((p) => p.sku).map((p) => p.sku as string).sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+    return withSku.length ? (withSku.length === 1 ? withSku[0] : `${withSku[0]} to ${withSku[withSku.length - 1]}`) : 'No SKUs yet';
+  }, [selected]);
 
-                  {/* View Products Button */}
-                  <button
-                    onClick={() => setSelectedCategory(name)}
-                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg border ${color.border} ${color.text} text-xs font-bold hover:bg-white/10 transition`}
-                  >
-                    View Products <ArrowRight className="w-3 h-3" />
-                  </button>
-                </div>
-              );
-            })}
-          </div>
-        )}
-      </div>
-    );
-  }
+  const pick = (key: string) => {
+    setSelectedKey(key); setFilter('all'); setUnitSearch(''); setPage(1); setConfirmId(null);
+    if (window.matchMedia('(max-width: 1279px)').matches) setTimeout(() => detailRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 50);
+  };
 
-  // ── Individual Products View (after clicking a category) ────
-  const catIndex = filteredCategories.findIndex(c => c.name === selectedCategory);
-  const color = CARD_COLORS[catIndex >= 0 ? catIndex % CARD_COLORS.length : 0];
+  const remove = async (id: string) => {
+    setDeleting(true);
+    try { await DataService.deleteProduct(id); setConfirmId(null); await load(); }
+    catch (err) { console.error(err); }
+    finally { setDeleting(false); }
+  };
 
-  // Sort by SKU / created_at so order is consistent 1→N
-  const sortedCategoryProducts = [...categoryProducts].sort((a, b) => {
-    // Sort by SKU number if available, otherwise by created_at
-    const numA = parseInt((a.sku || '').replace(/\D+/g, '') || '0', 10);
-    const numB = parseInt((b.sku || '').replace(/\D+/g, '') || '0', 10);
-    if (numA !== numB) return numA - numB;
-    return new Date(a.created_at).getTime() - new Date(b.created_at).getTime();
-  });
+  const togglePick = (key: string, name: string) => {
+    setPicked((cur) => {
+      const n = new Set(cur);
+      if (n.has(key)) n.delete(key); else n.add(key);
+      // suggest the name of the biggest picked product
+      const biggest = groups.filter((g) => n.has(g.key)).sort((a, b) => b.items.length - a.items.length)[0];
+      setTarget(biggest ? biggest.name : name);
+      return n;
+    });
+    setCombineConfirm(false); setCombineNote(null);
+  };
+
+  const pickedGroups = groups.filter((g) => picked.has(g.key));
+  const pickedUnits = pickedGroups.reduce((n, g) => n + g.items.length, 0);
+
+  const runCombine = async () => {
+    setCombining(true); setCombineNote(null);
+    const names = pickedGroups.flatMap((g) => g.items.map((p) => p.product_name));
+    const count = await DataService.renameProducts(names, target);
+    if (count === null) { setCombineNote({ ok: false, text: 'Could not combine the products. Check your connection and try again.' }); }
+    else {
+      // the combined product keeps the price of the biggest product that had one
+      const prices = pricesC.data?.prices ?? {};
+      const withPrice = pickedGroups.sort((a, b) => b.items.length - a.items.length).find((g) => prices[g.key] > 0);
+      if (withPrice && !(prices[priceKey(target)] > 0)) await PriceService.save(target, prices[withPrice.key]);
+      await Promise.all([productsC.refresh(), pricesC.refresh(), fetchCached(CACHE.inventoryOut.key, CACHE.inventoryOut.fetch, 0), fetchCached(CACHE.overview.key, CACHE.overview.fetch, 0)]);
+      setCombineNote({ ok: true, text: `${count} units now sit under “${target.trim()}”.` });
+      setCombine(false); setPicked(new Set()); setSelectedKey(priceKey(target)); setCombineConfirm(false);
+    }
+    setCombining(false);
+  };
+
+  const savePrice = async () => {
+    if (!selected || editPrice === null) return;
+    const amount = parseInt(editPrice, 10) || 0;
+    const where = await PriceService.save(selected.name, amount);
+    await pricesC.refresh();
+    setEditPrice(null);
+    setPriceNote(where === 'browser' ? 'Saved on this computer only. Run the one-time database step to share prices with other computers.' : 'Price saved.');
+  };
+
+  const total = products.length;
+  const inStock = products.filter((p) => p.status === 'In Stock').length;
 
   return (
-    <div className="p-4 md:p-6 space-y-4 md:space-y-5 pb-24 md:pb-6 max-w-7xl mx-auto">
-      {/* Header */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
-        <div className="flex items-center gap-3">
-          <button
-            onClick={() => { setSelectedCategory(null); setFilterStatus('all'); }}
-            className="flex items-center justify-center gap-1.5 px-3 py-2.5 md:py-2 rounded-xl bg-slate-100 dark:bg-slate-800 text-black dark:text-white text-xs font-bold hover:bg-slate-200 dark:bg-slate-700 transition"
-          >
-            <ChevronLeft className="w-4 h-4 md:w-3.5 md:h-3.5" /> <span className="hidden md:inline">Back</span>
-          </button>
-          <div className="min-w-0">
-            <h2 className="text-xl font-black text-black dark:text-white truncate leading-tight">{selectedCategory}</h2>
-            <p className="text-xs text-black dark:text-white mt-0.5">{sortedCategoryProducts.length} products</p>
-          </div>
+    <div className="p-4 md:p-6 space-y-6 max-w-7xl mx-auto pb-24 md:pb-6">
+      <header className="flex items-start justify-between gap-4 flex-wrap">
+        <div>
+          <h2 className="text-2xl font-bold k-display">Products</h2>
+          <p className="text-sm k-muted mt-1">Every unit you have made, grouped by product. Pick a product to see each unit.</p>
         </div>
-        <select
-          value={filterStatus}
-          onChange={e => setFilterStatus(e.target.value)}
-          className="w-full md:w-auto px-3 py-2.5 md:py-2 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl text-black dark:text-white text-xs font-bold focus:outline-none focus:border-emerald-500"
-        >
-          <option value="all">All Status</option>
-          <option value="In Stock">In Stock</option>
-          <option value="Reserved">Reserved</option>
-          <option value="Packed">Packed</option>
-          <option value="Shipped">Shipped</option>
-          <option value="Delivered">Delivered</option>
-        </select>
-      </div>
-
-      {/* 4-per-row product card grid */}
-      {loading ? (
-        <div className="text-center py-12"><Loader2 className="w-7 h-7 animate-spin mx-auto text-emerald-400" /></div>
-      ) : sortedCategoryProducts.length === 0 ? (
-        <div className="text-center py-12">
-          <Package className="w-8 h-8 mx-auto mb-2 text-slate-700" />
-          <p className="text-sm text-slate-400 dark:text-slate-500">No products match this filter</p>
+        <div className="flex gap-6 items-end">
+          <div><p className="text-3xl font-bold k-display leading-none tabular-nums">{loading ? '…' : groups.length}</p><p className="text-xs k-muted mt-1">products</p></div>
+          <div><p className="text-3xl font-bold k-display leading-none tabular-nums">{loading ? '…' : inStock.toLocaleString('en-IN')}</p><p className="text-xs k-muted mt-1">of {total.toLocaleString('en-IN')} units in stock</p></div>
+          <button onClick={() => void load()} aria-label="Refresh products" className="k-btn k-btn-ghost w-10 h-10"><RefreshCw className="w-4 h-4" /></button>
         </div>
-      ) : (
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-          {sortedCategoryProducts.map((product, idx) => (
-            <div
-              key={product.id}
-              className={`relative bg-white dark:bg-slate-900 border ${color.border} rounded-xl p-4 hover:bg-slate-100 dark:bg-slate-800/60 transition group overflow-hidden`}
-            >
-              {/* Background watermark number */}
-              <div className="absolute -bottom-2 -right-2 text-6xl font-black text-black dark:text-white/[0.03] select-none leading-none">
-                {idx + 1}
-              </div>
+      </header>
 
-              {/* Sequence number badge */}
-              <div className={`inline-flex items-center justify-center w-6 h-6 rounded-full bg-slate-100 dark:bg-slate-800 ${color.text} text-[10px] font-black mb-3`}>
-                {idx + 1}
-              </div>
-
-              {/* SKU */}
-              <p className={`text-sm font-black ${color.count} mb-0.5`}>
-                {product.sku || '—'}
-              </p>
-
-              {/* Product name (truncated) */}
-              <p className="text-[10px] text-black dark:text-white truncate mb-2">{product.product_name}</p>
-
-              {/* Status badge */}
-              <span className={`text-[9px] px-1.5 py-0.5 rounded font-bold ${getStatusStyle(product.status)}`}>
-                {product.status}
-              </span>
-
-              {/* Delete button (on hover) */}
-              <button
-                onClick={() => handleDeleteProduct(product.id)}
-                title="Delete product"
-                className="absolute top-2 right-2 p-1 rounded-lg opacity-0 group-hover:opacity-100 hover:bg-red-500/20 text-slate-600 hover:text-red-400 transition"
-              >
-                <Trash2 className="w-3 h-3" />
-              </button>
+      <div className="grid grid-cols-1 xl:grid-cols-[22rem_minmax(0,1fr)] gap-6 items-start">
+        {/* Product list */}
+        <section aria-label="Products" className="min-w-0 xl:sticky xl:top-28">
+          <div className="flex gap-2 mb-3">
+            <div className="relative flex-1 min-w-0">
+              <Search className="w-4 h-4 k-muted absolute left-3.5 top-1/2 -translate-y-1/2" aria-hidden="true" />
+              <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search product or SKU" aria-label="Search products" className="k-field" style={{ paddingLeft: '2.4rem' }} />
             </div>
-          ))}
-        </div>
-      )}
+            <button onClick={() => { setCombine((v) => !v); setPicked(new Set()); setCombineConfirm(false); setCombineNote(null); }} aria-pressed={combine} title="Combine products that are really the same one" className={`k-btn px-4 text-sm shrink-0 ${combine ? 'k-btn-ink' : 'k-btn-soft'}`}><Combine className="w-4 h-4" /> Combine</button>
+          </div>
+          {combineNote && <p role={combineNote.ok ? 'status' : 'alert'} className="text-sm font-medium mb-3 flex items-start gap-2" style={combineNote.ok ? undefined : { color: 'var(--bad)' }}>{combineNote.ok && <Check className="w-4 h-4 mt-0.5 shrink-0 k-lime-text" />}{combineNote.text}</p>}
+          {combine && <p className="text-sm k-muted mb-3">Tick the products that are really one product, for example “MASSAGER” and “period massager”. Then choose the name to keep.</p>}
+          <div className="k-card overflow-hidden">
+            {loading ? (
+              <div className="p-4 space-y-3" aria-busy="true">{[0, 1, 2, 3].map((i) => <div key={i} className="k-skel h-20 rounded-2xl animate-pulse" />)}</div>
+            ) : visibleGroups.length === 0 ? (
+              <div className="py-12 px-6 text-center">
+                <Package className="w-8 h-8 mx-auto k-muted mb-2" />
+                <p className="font-bold">{groups.length === 0 ? 'No products yet' : 'No product matches'}</p>
+                <p className="text-sm k-muted mt-1">{groups.length === 0 ? 'Add products inside a carton on the Cartons page.' : 'Try another search.'}</p>
+              </div>
+            ) : (
+              <ul className="max-h-[34rem] overflow-y-auto">
+                {visibleGroups.map((g) => {
+                  const on = selected?.key === g.key;
+                  return (
+                    <li key={g.key} className="border-t k-rule first:border-t-0">
+                      <button onClick={() => (combine ? togglePick(g.key, g.name) : pick(g.key))} aria-pressed={combine ? picked.has(g.key) : on} className="k-row w-full text-left px-4 py-3.5" style={(combine ? picked.has(g.key) : on) ? { background: 'var(--card2)', boxShadow: 'inset 3px 0 0 var(--lime)' } : undefined}>
+                        <span className="flex items-baseline justify-between gap-3">
+                          <span className="font-bold truncate flex items-center gap-2">{combine && <input type="checkbox" readOnly checked={picked.has(g.key)} tabIndex={-1} aria-hidden="true" className="w-4 h-4 pointer-events-none" />}{g.name}</span>
+                          <span className="text-sm k-muted tabular-nums shrink-0">{g.items.length} units</span>
+                        </span>
+                        <span className="flex h-1.5 rounded-full overflow-hidden gap-px mt-2.5 k-track" aria-hidden="true">
+                          {BUCKETS.map((b) => g.counts[b] > 0 && <span key={b} style={{ flex: g.counts[b], background: BUCKET_COLOR[b] }} />)}
+                        </span>
+                        <span className="block text-xs k-muted mt-1.5"><span className="font-semibold" style={{ color: 'var(--ink)' }}>{g.counts['In Stock']}</span> in stock</span>
+                      </button>
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+          </div>
+          {combine && picked.size >= 1 && (
+            <div className="k-card p-5 mt-3 space-y-3 k-rise" style={{ ['--i' as string]: 0 }}>
+              <p className="font-bold">{picked.size < 2 ? 'Tick one more product' : `Combine ${picked.size} products (${pickedUnits} units)`}</p>
+              <div>
+                <label htmlFor="combine-name" className="k-label">Name to keep</label>
+                <input id="combine-name" value={target} onChange={(e) => { setTarget(e.target.value); setCombineConfirm(false); }} className="k-field" list="combine-names" autoComplete="off" />
+                <datalist id="combine-names">{pickedGroups.map((g) => <option key={g.key} value={g.name} />)}</datalist>
+              </div>
+              {combineConfirm ? (
+                <div role="alert" className="rounded-2xl px-4 py-3 space-y-3" style={{ background: 'color-mix(in srgb, var(--bad) 10%, transparent)' }}>
+                  <p className="text-sm font-medium">This renames {pickedUnits} units to “{target.trim()}”. Past orders keep the name they were sold under. This cannot be undone in one click.</p>
+                  <div className="flex gap-2"><button onClick={() => setCombineConfirm(false)} className="k-btn k-btn-ghost px-4 py-2 text-sm">Cancel</button><button onClick={() => void runCombine()} disabled={combining} className="k-btn k-btn-ink px-4 py-2 text-sm">{combining && <Loader2 className="w-4 h-4 animate-spin" />} Yes, combine</button></div>
+                </div>
+              ) : (
+                <button onClick={() => setCombineConfirm(true)} disabled={picked.size < 2 || !target.trim()} className="k-btn k-btn-lime px-5 py-3 text-sm"><Combine className="w-4 h-4" /> Combine</button>
+              )}
+            </div>
+          )}
+        </section>
+
+        {/* Selected product */}
+        <section ref={detailRef} aria-label="Product details" className="min-w-0 space-y-4 scroll-mt-28">
+          {!selected ? (
+            <div className="k-card py-16 px-6 text-center"><p className="font-bold">Pick a product</p><p className="text-sm k-muted mt-1">Its units show here.</p></div>
+          ) : (
+            <>
+              <div className="k-card p-5 sm:p-6 k-rise" style={{ ['--i' as string]: 0 }}>
+                <div className="flex items-start justify-between gap-4 flex-wrap">
+                  <div className="min-w-0">
+                    <h3 className="text-2xl font-bold k-display">{selected.name}</h3>
+                    <p className="text-sm k-muted mt-1">SKUs <span className="font-mono font-semibold" style={{ color: 'var(--ink)' }}>{skuRange}</span></p>
+                    <div className="mt-2 text-sm flex items-center gap-2 flex-wrap">
+                      <span className="k-muted">Prepaid price</span>
+                      {editPrice !== null ? (
+                        <form onSubmit={(e) => { e.preventDefault(); void savePrice(); }} className="flex items-center gap-2">
+                          <label htmlFor="price-edit" className="sr-only">Prepaid price in rupees</label>
+                          <input id="price-edit" autoFocus inputMode="numeric" value={editPrice} onChange={(e) => setEditPrice(e.target.value.replace(/\D/g, ''))} className="k-field w-28 font-mono" />
+                          <button type="submit" aria-label="Save price" className="k-btn k-btn-lime w-9 h-9"><Check className="w-4 h-4" /></button>
+                          <button type="button" onClick={() => setEditPrice(null)} aria-label="Cancel" className="k-btn k-btn-ghost w-9 h-9"><X className="w-4 h-4" /></button>
+                        </form>
+                      ) : (
+                        <>
+                          <span className="font-bold tabular-nums">{(pricesC.data?.prices[priceKey(selected.name)] ?? 0) > 0 ? `₹${pricesC.data?.prices[priceKey(selected.name)].toLocaleString('en-IN')}` : 'Not set'}</span>
+                          <button onClick={() => setEditPrice(String(pricesC.data?.prices[priceKey(selected.name)] ?? ''))} aria-label="Edit prepaid price" className="k-btn k-btn-soft w-8 h-8"><Pencil className="w-3.5 h-3.5" /></button>
+                        </>
+                      )}
+                    </div>
+                    {priceNote && <p role="status" className="text-xs k-muted mt-1.5">{priceNote}</p>}
+                  </div>
+                  <div className="text-right">
+                    <p className="text-5xl font-bold k-display leading-none tabular-nums">{selected.items.length}</p>
+                    <p className="text-xs k-muted mt-1">units in total</p>
+                  </div>
+                </div>
+
+                <div className="flex h-3 rounded-full overflow-hidden gap-0.5 mt-5 k-track" role="img" aria-label={BUCKETS.filter((b) => selected.counts[b] > 0).map((b) => `${selected.counts[b]} ${b}`).join(', ')}>
+                  {BUCKETS.map((b) => selected.counts[b] > 0 && <div key={b} style={{ flex: selected.counts[b], background: BUCKET_COLOR[b] }} />)}
+                </div>
+                <ul className="flex flex-wrap gap-x-5 gap-y-1.5 mt-3 text-sm">
+                  {BUCKETS.filter((b) => selected.counts[b] > 0).map((b) => (
+                    <li key={b} className="flex items-center gap-2"><span className="w-2.5 h-2.5 rounded-full" style={{ background: BUCKET_COLOR[b] }} /> <span className="font-bold tabular-nums">{selected.counts[b]}</span> <span className="k-muted">{b.toLowerCase()}</span></li>
+                  ))}
+                </ul>
+              </div>
+
+              <div className="flex gap-3 flex-wrap items-center">
+                <div className="relative flex-1 min-w-[14rem] max-w-sm">
+                  <Search className="w-4 h-4 k-muted absolute left-3.5 top-1/2 -translate-y-1/2" aria-hidden="true" />
+                  <input value={unitSearch} onChange={(e) => { setUnitSearch(e.target.value); setPage(1); }} placeholder="Search SKU, customer or order" aria-label="Search units" className="k-field" style={{ paddingLeft: '2.4rem' }} />
+                </div>
+                <div className="flex gap-2 flex-wrap" role="group" aria-label="Filter units by status">
+                  <button className="k-chip" aria-pressed={filter === 'all'} onClick={() => { setFilter('all'); setPage(1); }}>All <span className="ml-1 opacity-70">{selected.items.length}</span></button>
+                  {BUCKETS.filter((b) => selected.counts[b] > 0).map((b) => (
+                    <button key={b} className="k-chip" aria-pressed={filter === b} onClick={() => { setFilter(b); setPage(1); }}>{b} <span className="ml-1 opacity-70">{selected.counts[b]}</span></button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="k-card overflow-hidden">
+                <div className="hidden md:grid grid-cols-[6.5rem_minmax(0,1.6fr)_minmax(0,1fr)_6.5rem_2.25rem] gap-4 px-5 py-3 text-xs font-semibold k-muted border-b k-rule" aria-hidden="true">
+                  <span>SKU</span><span>Customer and order</span><span>Carton</span><span className="text-center">Status</span><span />
+                </div>
+                {rows.length === 0 ? (
+                  <div className="py-12 px-6 text-center">
+                    <Package className="w-8 h-8 mx-auto k-muted mb-2" />
+                    <p className="font-bold">No unit matches</p>
+                    <p className="text-sm k-muted mt-1">Try another search or switch the filter.</p>
+                  </div>
+                ) : (
+                  <ul>
+                    {rows.map((p) => {
+                      const asking = confirmId === p.id;
+                      return (
+                        <li key={p.id} className="k-row border-t k-rule first:border-t-0 px-5 py-3">
+                          <div className="grid grid-cols-[minmax(0,1fr)_auto] md:grid-cols-[6.5rem_minmax(0,1.6fr)_minmax(0,1fr)_6.5rem_2.25rem] gap-x-4 gap-y-1 items-center">
+                            <p className="font-mono font-semibold text-sm">{p.sku || shortCode(p.id)}</p>
+                            <div className="min-w-0 col-span-2 md:col-span-1 order-3 md:order-none">
+                              <p className="text-sm font-medium truncate">{p.customer_name || <span className="k-muted font-normal">Not sold</span>}</p>
+                              {p.order_id && <p className="text-xs k-muted font-mono truncate">{p.order_id}</p>}
+                            </div>
+                            <p className="hidden md:block text-sm k-muted truncate" title={p.carton_id ? (cartonName.get(p.carton_id) || shortCode(p.carton_id)) : undefined}>{p.carton_id ? (cartonName.get(p.carton_id) || shortCode(p.carton_id)) : 'No carton'}</p>
+                            <span className="justify-self-end md:justify-self-center rounded-full px-3 py-1 text-xs font-bold text-center" style={pillStyle(p.status)}>{p.status}</span>
+                            <button onClick={() => setConfirmId(asking ? null : p.id)} aria-label={`Delete ${p.sku || 'unit'}`} className="hidden md:flex k-btn k-btn-soft w-8 h-8"><Trash2 className="w-3.5 h-3.5" /></button>
+                          </div>
+                          <div className="md:hidden mt-2 flex justify-end">
+                            <button onClick={() => setConfirmId(asking ? null : p.id)} className="text-xs font-semibold underline k-muted">Delete</button>
+                          </div>
+                          {asking && (
+                            <div role="alert" className="mt-3 rounded-2xl px-4 py-3 flex items-center justify-between gap-3 flex-wrap" style={{ background: 'color-mix(in srgb, var(--bad) 12%, transparent)' }}>
+                              <p className="text-sm font-medium">Delete {p.sku || 'this unit'}? {p.status === 'In Stock' ? 'It will leave your stock count.' : 'It is already on an order.'}</p>
+                              <div className="flex gap-2">
+                                <button onClick={() => setConfirmId(null)} className="k-btn k-btn-ghost px-4 py-2 text-sm"><X className="w-4 h-4" /> Keep it</button>
+                                <button onClick={() => void remove(p.id)} disabled={deleting} className="k-btn k-btn-ink px-4 py-2 text-sm">{deleting && <Loader2 className="w-4 h-4 animate-spin" />} Yes, delete</button>
+                              </div>
+                            </div>
+                          )}
+                        </li>
+                      );
+                    })}
+                  </ul>
+                )}
+                {units.length > PAGE_SIZE && (
+                  <nav className="px-5 py-3 border-t k-rule flex items-center justify-between gap-3 flex-wrap" aria-label="Unit pages">
+                    <p className="text-sm k-muted">{(current - 1) * PAGE_SIZE + 1} to {Math.min(current * PAGE_SIZE, units.length)} of {units.length}</p>
+                    <div className="flex items-center gap-1.5">
+                      <button onClick={() => setPage(current - 1)} disabled={current === 1} aria-label="Previous page" className="k-btn k-btn-ghost w-9 h-9"><ChevronLeft className="w-4 h-4" /></button>
+                      {pageList(current, lastPage).map((n, i) => n === '…'
+                        ? <span key={`gap-${i}`} className="w-6 text-center k-muted" aria-hidden="true">…</span>
+                        : <button key={n} onClick={() => setPage(n)} aria-label={`Page ${n}`} aria-current={n === current ? 'page' : undefined} className={`k-btn w-9 h-9 text-sm ${n === current ? 'k-btn-ink' : 'k-btn-ghost'}`}>{n}</button>)}
+                      <button onClick={() => setPage(current + 1)} disabled={current === lastPage} aria-label="Next page" className="k-btn k-btn-ghost w-9 h-9"><ChevronRight className="w-4 h-4" /></button>
+                    </div>
+                  </nav>
+                )}
+              </div>
+            </>
+          )}
+        </section>
+      </div>
     </div>
   );
 };

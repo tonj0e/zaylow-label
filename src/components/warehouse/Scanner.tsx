@@ -1,6 +1,6 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useRef } from 'react';
 import type { Order } from '../../types';
-import { X, Check, AlertTriangle, Loader2, ScanLine, Box, Package, CheckCircle } from 'lucide-react';
+import { X, Check, AlertTriangle, Loader2, ScanLine, Package, CheckCircle } from 'lucide-react';
 import { DataService } from '../../services/dataService';
 import { ScannerDisplay } from './ScannerDisplay';
 
@@ -37,6 +37,8 @@ export const Scanner: React.FC<ScannerProps> = ({
   // Tracks all scanned products (supports multi-unit orders)
   const [scannedProducts, setScannedProducts] = useState<ScannedProduct[]>([]);
   const [isScanning, setIsScanning] = useState(false);
+  const busy = useRef(false);
+  const scannedRef = useRef<ScannedProduct[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
@@ -46,20 +48,20 @@ export const Scanner: React.FC<ScannerProps> = ({
 
   // Handle scanned value (from QR code scanner or manual input)
   const handleScan = useCallback(async (value: string) => {
-    if (isScanning || !value) return;
-
+    if (busy.current || !value) return;
+    busy.current = true;
     setIsScanning(true);
     setError(null);
 
     try {
       if (step === 'carton') {
         // Scan Carton QR Code
-        const carton = await DataService.getCartonById(value);
+        const carton = await DataService.findCarton(value);
         if (!carton) {
-          throw new Error(`Carton with ID "${value}" not found`);
+          throw new Error(`No carton matches "${value}". Check the number or scan the QR code.`);
         }
 
-        const productCount = await DataService.getProductCountInCarton(value);
+        const productCount = await DataService.getProductCountInCarton(carton.id);
 
         setScannedCartonId(carton.id);
         setCartonInfo({
@@ -72,9 +74,9 @@ export const Scanner: React.FC<ScannerProps> = ({
 
       } else if (step === 'product') {
         // Scan Product QR Code
-        const product = await DataService.getProductById(value);
+        const product = await DataService.findProduct(value);
         if (!product) {
-          throw new Error(`Product "${value}" not found. Check the QR code and try again.`);
+          throw new Error(`No product matches "${value}". Check the number or scan the QR code.`);
         }
 
         // Verify product is in the scanned carton
@@ -92,7 +94,7 @@ export const Scanner: React.FC<ScannerProps> = ({
         }
 
         // Check not already scanned in this session
-        if (scannedProducts.some(p => p.id === product.id)) {
+        if (scannedRef.current.some(p => p.id === product.id)) {
           throw new Error(`This product (${product.sku || product.id}) was already scanned. Scan a different unit.`);
         }
 
@@ -102,7 +104,8 @@ export const Scanner: React.FC<ScannerProps> = ({
           productName: product.product_name
         };
 
-        const updated = [...scannedProducts, newProduct];
+        const updated = [...scannedRef.current, newProduct];
+        scannedRef.current = updated;
         setScannedProducts(updated);
         setScannedValue('');
 
@@ -115,16 +118,20 @@ export const Scanner: React.FC<ScannerProps> = ({
     } catch (err: any) {
       setError(err.message || 'An error occurred during scanning');
     } finally {
+      busy.current = false;
       setIsScanning(false);
     }
-  }, [step, scannedCartonId, isScanning, scannedProducts, requiredQty]);
+  }, [step, scannedCartonId, requiredQty]);
 
   // Handle manual entry
   const handleKeyPress = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter') {
+      e.preventDefault();
       handleScan(scannedValue.trim());
     }
   };
+
+  const shake = (v: string) => { setScannedValue(v); if (error) setError(null); };
 
   // Confirm reservation of all scanned products
   const handleConfirm = async () => {
@@ -161,7 +168,8 @@ export const Scanner: React.FC<ScannerProps> = ({
 
   // Remove a scanned product (undo)
   const handleRemoveProduct = (productId: string) => {
-    setScannedProducts(prev => prev.filter(p => p.id !== productId));
+    scannedRef.current = scannedRef.current.filter(p => p.id !== productId);
+    setScannedProducts(scannedRef.current);
     if (step === 'confirmation') setStep('product');
   };
 
@@ -170,6 +178,7 @@ export const Scanner: React.FC<ScannerProps> = ({
     setStep('carton');
     setScannedCartonId(null);
     setCartonInfo(null);
+    scannedRef.current = [];
     setScannedProducts([]);
     setScannedValue('');
   };
@@ -178,218 +187,118 @@ export const Scanner: React.FC<ScannerProps> = ({
   // Early return AFTER all hooks
   if (!isOpen) return null;
 
-  return (
-    <div className="fixed inset-0 z-50 bg-slate-50 dark:bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4 overflow-y-auto">
-      <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl w-full max-w-md mx-4 p-6 shadow-2xl space-y-4">
+  const title = step === 'carton' ? 'Scan the carton' : step === 'product' ? `Scan product ${scannedCount + 1} of ${requiredQty}` : 'Confirm and reserve';
+  const hint = step === 'carton' ? 'Scan the QR on the carton box, or type its number.' : step === 'product' ? `${requiredQty - scannedCount} more to scan. Scan the QR or type the product number (SKU).` : 'All units scanned. Check them and confirm.';
 
-        {/* Header */}
-        <div className="flex items-center justify-between pb-3 border-b border-slate-200 dark:border-slate-800">
-          <div>
-            <h2 className="text-xl font-bold text-black dark:text-white">
-              {step === 'carton' ? 'Step 1: Scan Carton' :
-               step === 'product' ? `Step 2: Scan Product ${scannedCount + 1} of ${requiredQty}` :
-               '✓ Confirm & Reserve'}
-            </h2>
-            <p className="text-xs text-slate-400 dark:text-slate-500 mt-0.5">
-              {step === 'carton' ? 'Scan the carton box QR code first' :
-               step === 'product' ? `${requiredQty - scannedCount} more product${requiredQty - scannedCount !== 1 ? 's' : ''} to scan` :
-               'All products scanned — review and confirm'}
-            </p>
-          </div>
-          <button onClick={onClose} className="p-1 rounded-lg text-black dark:text-white hover:text-black dark:text-white hover:bg-slate-100 dark:bg-slate-800 transition">
-            <X className="w-5 h-5" />
+  const entry = (kind: 'carton' | 'product') => (
+    <>
+      <ScannerDisplay label={kind} onScan={handleScan} />
+      <div>
+        <label htmlFor="scan-entry" className="k-label">Or type the {kind === 'carton' ? 'carton number' : 'product number'}</label>
+        <div className="flex gap-2">
+          <input
+            id="scan-entry"
+            type="text"
+            value={scannedValue}
+            onChange={(e) => shake(e.target.value)}
+            onKeyDown={handleKeyPress}
+            placeholder={kind === 'carton' ? 'Carton ID or location' : 'e.g. PM-001'}
+            autoFocus
+            autoComplete="off"
+            autoCapitalize="characters"
+            className="k-field font-mono"
+          />
+          <button
+            onClick={() => handleScan(scannedValue.trim())}
+            disabled={!scannedValue.trim() || isScanning}
+            className="k-btn k-btn-lime px-5 text-sm shrink-0"
+          >
+            {isScanning ? <Loader2 className="w-4 h-4 animate-spin" /> : <ScanLine className="w-4 h-4" />} Find
           </button>
         </div>
+      </div>
+    </>
+  );
 
-        {/* Progress bar — splits into segments for each required product */}
-        <div className="flex items-center gap-1">
-          {/* Carton step */}
-          <div className={`h-2 rounded-full flex-shrink-0 w-8 ${step !== 'carton' ? 'bg-emerald-500' : 'bg-slate-200 dark:bg-slate-700'}`} />
-          {/* One segment per required product */}
+  return (
+    <div className="fixed inset-0 z-50 flex items-start justify-center p-3 sm:p-6 overflow-y-auto" style={{ background: 'rgba(0,0,0,.6)' }} role="dialog" aria-modal="true" aria-label={title}>
+      <div className="k-card w-full max-w-md my-auto p-6 shadow-2xl space-y-4 k-rise" style={{ ['--i' as string]: 0 }}>
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <h2 className="text-xl font-bold k-display">{title}</h2>
+            <p className="text-sm k-muted mt-0.5">{hint}</p>
+          </div>
+          <button onClick={onClose} aria-label="Close" className="k-btn k-btn-ghost w-10 h-10 shrink-0"><X className="w-4 h-4" /></button>
+        </div>
+
+        <div className="flex items-center gap-1" aria-hidden="true">
+          <div className="h-2 rounded-full w-8 shrink-0 k-track" style={step !== 'carton' ? { background: 'var(--lime)' } : undefined} />
           {Array.from({ length: requiredQty }).map((_, i) => (
-            <div
-              key={i}
-              className={`h-2 rounded-full flex-1 transition-all ${
-                i < scannedCount ? 'bg-emerald-500' : 'bg-slate-200 dark:bg-slate-700'
-              }`}
-            />
+            <div key={i} className="h-2 rounded-full flex-1 k-track" style={i < scannedCount ? { background: 'var(--lime)' } : undefined} />
           ))}
         </div>
 
-        {/* Quantity badge */}
-        <div className="flex items-center gap-3 text-sm text-black dark:text-white">
-          <div className="flex justify-between w-full px-1">
-            <span>Order: <span className="font-mono text-emerald-400">{order.id}</span></span>
-            <span>Customer: <span className="font-medium text-black dark:text-white">{order.customer.name}</span></span>
-          </div>
-        </div>
-        <div className="flex items-center gap-2 px-3 py-2 bg-slate-50 dark:bg-slate-950 rounded-lg text-sm">
-          <Package className="w-4 h-4 text-orange-400" />
-          <span className="text-black dark:text-white">Product:</span>
-          <span className="text-black dark:text-white font-medium">{order.item.productName}</span>
-          <span className="ml-auto px-2 py-0.5 rounded-full bg-orange-500/20 text-orange-400 text-xs font-black">
-            Qty: {requiredQty}
-          </span>
+        <div className="k-card2 rounded-2xl px-4 py-3 text-sm space-y-1">
+          <div className="flex justify-between gap-3"><span className="k-muted">Order</span><span className="font-mono font-semibold">{order.id}</span></div>
+          <div className="flex justify-between gap-3"><span className="k-muted">Customer</span><span className="font-semibold truncate">{order.customer.name}</span></div>
+          <div className="flex justify-between gap-3"><span className="k-muted flex items-center gap-1.5"><Package className="w-3.5 h-3.5 k-lime-text" /> Product</span><span className="font-semibold truncate">{order.item.productName} × {requiredQty}</span></div>
         </div>
 
-        {/* ── CARTON STEP ── */}
-        {step === 'carton' && (
-          <>
-            <ScannerDisplay label="carton" onScan={handleScan} />
-            <div className="space-y-3">
-              <label className="text-xs font-bold text-black dark:text-white uppercase tracking-wider block">
-                <Box className="w-3 h-3 inline mr-1" />
-                Carton ID (or scan QR)
-              </label>
-              <input
-                type="text"
-                value={scannedValue}
-                onChange={(e) => setScannedValue(e.target.value)}
-                onKeyPress={handleKeyPress}
-                placeholder="Scan or enter carton ID..."
-                autoFocus
-                className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-700 rounded-lg text-black dark:text-white font-mono text-sm focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500/30"
-              />
-              <button
-                onClick={() => handleScan(scannedValue.trim())}
-                disabled={!scannedValue.trim() || isScanning}
-                className="w-full px-3 py-2.5 rounded-xl bg-emerald-500 text-slate-950 font-black text-sm hover:bg-emerald-400 transition flex items-center justify-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed"
-              >
-                {isScanning ? (
-                  <><Loader2 className="w-4 h-4 animate-spin" /><span>Verifying...</span></>
-                ) : (
-                  <><ScanLine className="w-4 h-4" /><span>Confirm Carton</span></>
-                )}
-              </button>
-            </div>
-          </>
+        {error && (
+          <div role="alert" className="rounded-2xl px-4 py-3 text-sm flex items-start gap-2" style={{ background: 'color-mix(in srgb, var(--bad) 12%, transparent)' }}>
+            <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0 k-bad" />
+            <span>{error}</span>
+          </div>
         )}
 
-        {/* ── PRODUCT STEP ── */}
+        {step === 'carton' && entry('carton')}
+
         {step === 'product' && cartonInfo && (
           <>
-            {/* Carton confirmed banner */}
-            <div className="flex items-center gap-3 px-3 py-2 bg-emerald-500/10 border border-emerald-500/30 rounded-xl">
-              <Check className="w-4 h-4 text-emerald-400 flex-shrink-0" />
-              <div className="text-xs">
-                <span className="text-black dark:text-white">Carton: </span>
-                <span className="font-mono text-emerald-400 font-bold">{cartonInfo.location || cartonInfo.id}</span>
-              </div>
-              <button onClick={handleBackToCarton} className="ml-auto text-xs text-slate-400 dark:text-slate-500 hover:text-black dark:text-white">change</button>
+            <div className="flex items-center gap-3 rounded-2xl px-4 py-2.5 text-sm k-card2">
+              <Check className="w-4 h-4 k-lime-text shrink-0" />
+              <span className="k-muted">Carton</span>
+              <span className="font-mono font-semibold truncate">{cartonInfo.location || cartonInfo.id}</span>
+              <button onClick={handleBackToCarton} className="ml-auto text-xs font-semibold underline">Change</button>
             </div>
-
-            {/* Already scanned products */}
             {scannedProducts.length > 0 && (
-              <div className="space-y-1">
-                <p className="text-xs font-bold text-slateald-400 uppercase tracking-wider text-black dark:text-white">Scanned so far:</p>
+              <ul className="space-y-1.5">
                 {scannedProducts.map((p, i) => (
-                  <div key={p.id} className="flex items-center gap-2 px-3 py-1.5 bg-emerald-500/10 border border-emerald-500/20 rounded-lg">
-                    <CheckCircle className="w-4 h-4 text-emerald-400 flex-shrink-0" />
-                    <span className="text-xs text-black dark:text-white font-medium flex-1">{p.sku || p.productName}</span>
-                    <span className="text-xs text-slate-400 dark:text-slate-500">#{i + 1}</span>
-                    <button onClick={() => handleRemoveProduct(p.id)} className="text-red-400 hover:text-red-300 text-xs ml-1">✕</button>
-                  </div>
+                  <li key={p.id} className="flex items-center gap-2 rounded-xl px-3 py-2 text-sm k-card2">
+                    <CheckCircle className="w-4 h-4 k-lime-text shrink-0" />
+                    <span className="font-medium flex-1 truncate">{p.sku || p.productName}</span>
+                    <span className="text-xs k-muted">#{i + 1}</span>
+                    <button onClick={() => handleRemoveProduct(p.id)} aria-label={`Remove ${p.sku || p.productName}`} className="k-btn k-btn-soft w-7 h-7"><X className="w-3.5 h-3.5" /></button>
+                  </li>
                 ))}
-              </div>
+              </ul>
             )}
-
-            <ScannerDisplay label="product" onScan={handleScan} />
-            <div className="space-y-3">
-              <label className="text-xs font-bold text-black dark:text-white uppercase tracking-wider block">
-                <Package className="w-3 h-3 inline mr-1" />
-                Product {scannedCount + 1} of {requiredQty} — scan QR or enter ID
-              </label>
-              <input
-                type="text"
-                value={scannedValue}
-                onChange={(e) => setScannedValue(e.target.value)}
-                onKeyPress={handleKeyPress}
-                placeholder="Scan or enter product ID..."
-                autoFocus
-                className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-700 rounded-lg text-black dark:text-white font-mono text-sm focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500/30"
-              />
-              <button
-                onClick={() => handleScan(scannedValue.trim())}
-                disabled={!scannedValue.trim() || isScanning}
-                className="w-full px-3 py-2.5 rounded-xl bg-emerald-500 text-slate-950 font-black text-sm hover:bg-emerald-400 transition flex items-center justify-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed"
-              >
-                {isScanning ? (
-                  <><Loader2 className="w-4 h-4 animate-spin" /><span>Verifying Product...</span></>
-                ) : (
-                  <><ScanLine className="w-4 h-4" /><span>Confirm Product {scannedCount + 1}</span></>
-                )}
-              </button>
-            </div>
+            {entry('product')}
           </>
         )}
 
-        {/* ── CONFIRMATION STEP ── */}
         {step === 'confirmation' && cartonInfo && (
           <>
-            <div className="space-y-2">
-              <div className="flex items-center justify-between px-3 py-2 bg-slate-50 dark:bg-slate-950 rounded-lg">
-                <span className="text-sm font-semibold text-black dark:text-white">Carton</span>
-                <span className="font-mono text-emerald-400">{cartonInfo.location || cartonInfo.id}</span>
-              </div>
-              <div className="flex items-center justify-between px-3 py-2 bg-slate-50 dark:bg-slate-950 rounded-lg">
-                <span className="text-sm font-semibold text-black dark:text-white">Customer</span>
-                <span className="text-black dark:text-white">{order.customer.name}</span>
-              </div>
-              <div className="flex items-center justify-between px-3 py-2 bg-slate-50 dark:bg-slate-950 rounded-lg">
-                <span className="text-sm font-semibold text-black dark:text-white">Products Reserved</span>
-                <span className="font-black text-emerald-400">{scannedProducts.length} / {requiredQty}</span>
-              </div>
-
-              {/* List all scanned products */}
-              <div className="space-y-1 pt-1">
-                {scannedProducts.map((p, i) => (
-                  <div key={p.id} className="flex items-center gap-2 px-3 py-2 bg-emerald-500/10 border border-emerald-500/20 rounded-lg">
-                    <CheckCircle className="w-4 h-4 text-emerald-400 flex-shrink-0" />
-                    <div className="flex-1 min-w-0">
-                      <p className="text-xs font-bold text-black dark:text-white truncate">{p.sku || p.productName}</p>
-                      <p className="text-[10px] text-slate-400 dark:text-slate-500 font-mono truncate">{p.id.slice(0, 20)}...</p>
-                    </div>
-                    <span className="text-xs text-slate-400 dark:text-slate-500 flex-shrink-0">Unit {i + 1}</span>
-                  </div>
-                ))}
-              </div>
+            <div className="k-card2 rounded-2xl px-4 py-3 text-sm space-y-1">
+              <div className="flex justify-between gap-3"><span className="k-muted">Carton</span><span className="font-mono font-semibold">{cartonInfo.location || cartonInfo.id}</span></div>
+              <div className="flex justify-between gap-3"><span className="k-muted">Units reserved</span><span className="font-bold">{scannedProducts.length} of {requiredQty}</span></div>
             </div>
-
-            <div className="pt-4 border-t border-slate-200 dark:border-slate-800 flex justify-end gap-3">
-              <button
-                onClick={() => { setStep('product'); }}
-                className="px-4 py-2 rounded-xl bg-slate-100 dark:bg-slate-800 text-black dark:text-white font-bold text-xs hover:bg-slate-200 dark:bg-slate-700 transition"
-              >
-                Back
-              </button>
-              <button
-                onClick={handleConfirm}
-                disabled={loading}
-                className="px-5 py-2 rounded-xl bg-emerald-500 text-slate-950 font-black text-xs hover:bg-emerald-400 shadow-lg shadow-emerald-500/20 transition flex items-center gap-2 disabled:opacity-50"
-              >
-                {loading ? (
-                  <><Loader2 className="w-4 h-4 animate-spin" /><span>Confirming...</span></>
-                ) : (
-                  <><Check className="w-4 h-4" /><span>Confirm & Generate Label</span></>
-                )}
+            <ul className="space-y-1.5">
+              {scannedProducts.map((p, i) => (
+                <li key={p.id} className="flex items-center gap-2 rounded-xl px-3 py-2 text-sm k-card2">
+                  <CheckCircle className="w-4 h-4 k-lime-text shrink-0" />
+                  <span className="font-semibold flex-1 truncate">{p.sku || p.productName}</span>
+                  <span className="text-xs k-muted">Unit {i + 1}</span>
+                </li>
+              ))}
+            </ul>
+            <div className="flex justify-end gap-3 pt-1">
+              <button onClick={() => setStep('product')} className="k-btn k-btn-ghost px-5 py-3 text-sm">Back</button>
+              <button onClick={handleConfirm} disabled={loading} className="k-btn k-btn-lime px-6 py-3 text-sm">
+                {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />} Confirm and make label
               </button>
             </div>
           </>
-        )}
-
-        {/* Error Message */}
-        {error && (
-          <div className="p-3 bg-red-900/20 border border-red-800 rounded-lg text-sm flex items-start gap-2">
-            <AlertTriangle className="w-4 h-4 mt-0.5 text-red-400 flex-shrink-0" />
-            <span className="text-red-300">{error}</span>
-          </div>
-        )}
-
-        {/* Instructions */}
-        {step !== 'confirmation' && (
-          <div className="text-xs text-slate-400 dark:text-slate-500 text-center italic">
-            Scan the QR code on the {step === 'carton' ? 'carton box' : 'product unit'} or manually enter the ID above
-          </div>
         )}
       </div>
     </div>
