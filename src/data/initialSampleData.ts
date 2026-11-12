@@ -11,7 +11,7 @@ export const INITIAL_SETTINGS: CompanySettings = {
     addressLine: '',
     city: '',
     state: '',
-    pinCode: '',
+    pinCode: '688532',
     gstin: ''
   },
 

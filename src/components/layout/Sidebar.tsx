@@ -1,3 +1,4 @@
+import { InstallApp } from '../auth/InstallApp';
 import React, { useState } from 'react';
 import {
   LayoutDashboard,
@@ -228,6 +229,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
           ))}
         </div>
       ))}
+      {mobile && <div className="mt-4 mb-2 px-1 shrink-0"><InstallApp /></div>}
     </nav>
   );
 

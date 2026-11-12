@@ -133,6 +133,9 @@ export const WarrantyCardView: React.FC<WarrantyCardViewProps> = ({
     else await onOrdersChanged?.();
   };
 
+  // get the fonts and the picture maker ready now, so the first print or download is not slow
+  useEffect(() => { void import('../../utils/captureImage').then((m) => m.loadFontCss()).catch(() => undefined); void import('html-to-image').catch(() => undefined); }, []);
+
   // keep in step with the orders the site loads
   useEffect(() => { if (propOrders && propOrders.length) setOrders(propOrders); }, [propOrders]);
 
@@ -381,7 +384,7 @@ export const WarrantyCardView: React.FC<WarrantyCardViewProps> = ({
         window.onload = function () { setTimeout(function () { window.print(); }, 400); };
       </script></body></html>`);
       win.document.close();
-      await markPrinted(list.map((o) => o.id), true);
+      void markPrinted(list.map((o) => o.id), true); // saves in the background; the list already shows Printed
       setOkNote(`${list.length} warranty card${list.length === 1 ? '' : 's'} sent to print and marked Printed.`);
       setPicked(new Set());
     } catch (err) {
