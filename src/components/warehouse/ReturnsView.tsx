@@ -102,8 +102,17 @@ export const ReturnsView = () => {
         return id === q || id === withPrefix || id.replace(/^zyl-/, '') === q || (o.trackingNumber || '').replace(/\s+/g, '').toLowerCase() === q;
       });
       if (!order) setNote({ kind: 'error', text: `No order matches "${value}". Use the order ID from the label, like ZYL-406419, or the tracking number.` });
-      else if (order.status === 'Returned' || order.status === 'Claims') setNote({ kind: 'error', text: `${order.id} is already in returns or claims.` });
-      else setFound(order);
+      else {
+        // Only block when this parcel is really logged here already. The order status alone is not enough:
+        // India Post tracking marks an order "Returned" before the parcel reaches the warehouse.
+        const { data: rows, error } = await anySupabase.from('returns').select('status, date_received').eq('order_id', order.id).order('id', { ascending: false }).limit(1);
+        if (error) throw error;
+        const prev = (rows || [])[0] as { status: string; date_received: string } | undefined;
+        if (prev) {
+          const where = prev.status === 'Pending Inspection' ? 'is already in the list below, waiting for a check' : prev.status === 'Restocked' ? 'was already logged and put back in stock' : 'was already logged and written off';
+          setNote({ kind: 'error', text: `${order.id} ${where} (${niceDay(prev.date_received)}).` });
+        } else setFound(order);
+      }
     } catch {
       setNote({ kind: 'error', text: 'Could not load orders. Check your connection and try again.' });
     } finally {

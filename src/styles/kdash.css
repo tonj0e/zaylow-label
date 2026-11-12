@@ -166,3 +166,8 @@
   .kdash main button:not(.k-btn):not(.k-chip):not([class*="absolute"]):not([class*="fixed"]):not([class*="sticky"]) { position: relative; }
   .kdash main button:not(.k-btn):not(.k-chip):not([class*="absolute"]):not([class*="fixed"]):not([class*="sticky"])::after { content: ''; position: absolute; inset: -0.5rem -0.4rem; }
 }
+
+/* iPhone zooms the whole page when you tap a box whose text is smaller than 16px, and often stays zoomed (the page then looks shifted and cut at the sides). 16px on touch screens stops that. */
+@media (hover: none) and (pointer: coarse) {
+  input:not([type=checkbox]):not([type=radio]):not([type=range]):not([type=file]), select, textarea { font-size: 16px !important; }
+}
