@@ -7,10 +7,10 @@ export const INITIAL_SETTINGS: CompanySettings = {
   warehouse: {
     companyName: 'ZAYLOW',
     contactPerson: '',
-    phone: '',
-    addressLine: '',
-    city: '',
-    state: '',
+    phone: '+91 6282010344',
+    addressLine: 'GOLD MAREN SEE FOODS',
+    city: 'ALAPPUZHA',
+    state: 'KERALA',
     pinCode: '688532',
     gstin: ''
   },

@@ -77,8 +77,13 @@ export const parseAddress = (raw: string): ParsedAddress => {
   // landline lines ("Tel 0471 2345678") are not wanted
   text = text.replace(/^[^\n]*\b(?:tel|telephone|landline|std)\b[ \t:.-]*\d[\d \t-]*$/gim, '\n');
   // phone: a 10-digit Indian mobile number (starts with 6 to 9), written with or without spaces, dashes or +91
-  const ph = text.match(/(?<!\d)(?:(?:\+|00)?\s?91[\s.-]?)?([6-9](?:[\s.-]?\d){9})(?!\d)/);
-  if (ph) { out.phone = ph[1].replace(/\D/g, ''); text = text.replace(ph[0], '\n'); }
+  // when two numbers are given (for example "8921587213,9074789313") the first one is used and the others are removed from the address
+  const phRe = /(?<!\d)(?:(?:\+|00)?\s?91[\s.-]?)?([6-9](?:[\s.-]?\d){9})(?!\d)/g;
+  const phones = [...text.matchAll(phRe)];
+  if (phones.length) { out.phone = phones[0][1].replace(/\D/g, ''); text = text.replace(phRe, '\n')
+    // what is left of the number lines: separators like "," or "/", and a bare "Mobile Number:" label
+    .replace(/^[\s,/;&|:-]+$/gm, '')
+    .replace(/^\s*(?:phone|mobile|mob|contact|whats\s*app|number|ph|cell)(?:\s*(?:no|number))?[\s:.\-=,/]*$/gim, ''); }
   // PIN: exactly 6 digits on their own. Any longer run of digits (a landline, a wrong number) is ignored, so it can never become a PIN.
   const forPin = text.replace(/(?<!\d)\d(?:[\s.-]?\d){6,}(?!\d)/g, ' ');
   const pins = [...forPin.matchAll(/(?<!\d)([1-9]\d{5}|[1-9]\d{2}[\s-]\d{3})(?!\d)/g)];
@@ -88,7 +93,7 @@ export const parseAddress = (raw: string): ParsedAddress => {
   const LABELS: [keyof ParsedAddress, RegExp][] = [
     ['name', /^(?:full\s*name|customer\s*name|customer|name|nm)\b\s*[:\-=]\s*(.*)$/i],
     ['phone', /^(?:phone|mobile|mob|contact|whats\s*app|number|ph|cell)(?:\s*(?:no|number))?\b\s*[:\-=]\s*(.*)$/i],
-    ['addressLine', /^(?:full\s*address|address|addr|add|house|door\s*no)\b\s*[:\-=]\s*(.*)$/i],
+    ['addressLine', /^(?:full\s*address|address|addres|adress|adres|addr|add|house|door\s*no)\b\s*[:\-=]\s*(.*)$/i],
     ['landmark', /^(?:landmark|land\s*mark|near(?:by)?|lm)\b\s*[:\-=]\s*(.*)$/i],
     ['city', /^(?:city|place|town|village|post\s*office|post|po|location)\b\s*[:\-=]\s*(.*)$/i],
     ['pinCode', /^(?:pin\s*code|pincode|pin|zip|postal\s*code)\b\s*[:\-=]\s*(.*)$/i],
