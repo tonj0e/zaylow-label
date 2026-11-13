@@ -26,7 +26,7 @@ const currentWarrantyDays = (o: Order) => {
   return Number.isFinite(d) && d > 0 ? d : 0;
 };
 
-const COURIERS = ['India Post', 'Delhivery', 'DTDC', 'Shiprocket', 'NimbusPost', 'Bluedart', 'Ekart', 'Custom'];
+const COURIERS = ['India Post', 'DTDC'];
 
 // The free-text note is whatever comes before the packed QTY:/ADV:/CTN: tokens.
 const notesOf = (raw?: string) => {

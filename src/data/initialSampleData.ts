@@ -15,7 +15,7 @@ export const INITIAL_SETTINGS: CompanySettings = {
     gstin: ''
   },
 
-  defaultCourier: 'Delhivery',
+  defaultCourier: 'India Post',
   defaultPaymentType: 'COD',
   paperSize: '100x150mm',
   dpi: 300,

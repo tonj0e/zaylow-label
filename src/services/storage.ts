@@ -105,6 +105,8 @@ export class StorageService {
       Object.keys(DEMO).forEach((k) => { if ((wh[k] || '').trim() === DEMO[k]) wh[k] = k === 'companyName' ? 'ZAYLOW' : ''; });
       // a browser that never had the sender address saved (a new phone, the live site) uses the owner's hub address so the label is never half empty
       (['phone', 'addressLine', 'city', 'state', 'pinCode'] as const).forEach((k) => { if (!(wh[k] || '').trim()) wh[k] = (INITIAL_SETTINGS.warehouse as unknown as Record<string, string>)[k]; });
+      // the shop ships only with India Post and DTDC: an old saved default (Delhivery) becomes India Post
+      if (stored.defaultCourier !== 'India Post' && stored.defaultCourier !== 'DTDC') stored.defaultCourier = 'India Post';
       return { ...INITIAL_SETTINGS, ...stored, warehouse: wh as unknown as CompanySettings['warehouse'] };
     } catch {
       return INITIAL_SETTINGS;

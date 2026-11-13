@@ -131,7 +131,7 @@ export class BulkImporterService {
   static convertRowsToOrders(
     rows: Record<string, any>[],
     mapping: ColumnMapping,
-    defaultCourier: CourierName = 'Delhivery',
+    defaultCourier: CourierName = 'India Post',
     defaultPaymentType: PaymentType = 'COD'
   ): Order[] {
     return rows.map((row, idx) => {

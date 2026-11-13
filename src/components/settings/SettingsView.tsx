@@ -321,7 +321,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ settings, onSaveSett
               <div className="grid sm:grid-cols-2 gap-4">
                 <Field id="s-courier" label="Courier used by default">
                   <select id="s-courier" value={formData.defaultCourier} onChange={(e) => setFormData({ ...formData, defaultCourier: e.target.value as CourierName })} className="k-field">
-                    {['Delhivery', 'DTDC', 'India Post', 'Shiprocket', 'NimbusPost', 'Bluedart'].map((c) => <option key={c} value={c}>{c}</option>)}
+                    {['India Post', 'DTDC'].map((c) => <option key={c} value={c}>{c}</option>)}
                   </select>
                 </Field>
                 <div>

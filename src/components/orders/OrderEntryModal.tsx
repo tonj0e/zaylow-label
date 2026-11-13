@@ -19,7 +19,7 @@ interface OrderEntryModalProps {
 
 interface StockRow { id: string; product_name: string; sku?: string; available?: number }
 
-const COURIERS: CourierName[] = ['India Post', 'Delhivery', 'DTDC', 'Shiprocket', 'NimbusPost', 'Bluedart', 'Ekart', 'Custom'];
+const COURIERS: CourierName[] = ['India Post', 'DTDC'];
 const WARRANTY = [
   { value: '0', label: 'None' },
   { value: '3', label: '3 days' },
