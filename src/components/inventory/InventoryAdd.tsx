@@ -2,11 +2,12 @@ import React, { useEffect, useRef, useState } from 'react';
 import { PackagePlus, Check, ArrowRight, ArrowLeft, AlertTriangle, CheckCircle2, Loader2, Box } from 'lucide-react';
 import { DataService } from '../../services/dataService';
 import { invalidate } from '../../services/swrCache';
+import { SupplierService, type Supplier } from '../../services/supplierService';
 
 const EMPTY = {
   productName: '', sku: '', totalCartons: '', piecesPerCarton: '',
   pricePerPiece: '', freightCost: '', otherCharges: '',
-  supplierName: '', supplierPhone: '', supplierGst: '', supplierAddress: '', invoiceNo: '', poNo: '',
+  supplierId: '', supplierName: '', supplierPhone: '', supplierGst: '', supplierAddress: '', invoiceNo: '', poNo: '',
 };
 type Form = typeof EMPTY;
 type Notice = { kind: 'ok' | 'warn' | 'error'; text: string } | null;
@@ -52,6 +53,13 @@ export const InventoryAdd = () => {
   const [notice, setNotice] = useState<Notice>(null);
   const timer = useRef<number | undefined>(undefined);
   useEffect(() => () => window.clearTimeout(timer.current), []);
+
+  const [suppliers, setSuppliers] = useState<Supplier[]>([]);
+  useEffect(() => { SupplierService.list().then(setSuppliers).catch(() => setSuppliers([])); }, []);
+  const pickSupplier = (id: string) => {
+    const s = suppliers.find((x) => x.id === id);
+    setF((p) => s ? { ...p, supplierId: s.id, supplierName: s.name, supplierPhone: s.phone || '', supplierGst: s.gst || '', supplierAddress: s.address || '' } : { ...p, supplierId: '', supplierName: '', supplierPhone: '', supplierGst: '', supplierAddress: '' });
+  };
 
   const set = (e: React.ChangeEvent<HTMLInputElement>) => setF((p) => ({ ...p, [e.target.name]: e.target.value }));
 
@@ -103,8 +111,15 @@ export const InventoryAdd = () => {
         po_no: f.poNo || null,
         sku: f.sku || undefined,
         total_cartons: cartons || undefined,
+        supplier_id: f.supplierId || null,
       });
       if (result) {
+        if (f.supplierId) {
+          // the same stock also appears in the supplier's purchases, so it is written down once
+          try {
+            await SupplierService.savePurchase({ supplier_id: f.supplierId, purchase_date: new Date().toISOString().slice(0, 10), item_name: f.productName, cartons, units_per_carton: perCarton, quantity: null, price_per_carton: Math.round(price * perCarton * 100) / 100, total_paid: Math.round(total * 100) / 100, bill_path: null, bill_name: null, batch_id: String(result.id), notes: f.invoiceNo ? `Invoice ${f.invoiceNo}` : null });
+          } catch (err) { console.error(err); }
+        }
         try {
           await DataService.createInventoryCartons(result.id, cartons, f.sku || null);
           show({ kind: 'ok', text: `Received ${pieces.toLocaleString('en-IN')} units of ${f.productName}. The cartons are ready for tracking.` });
@@ -227,6 +242,14 @@ export const InventoryAdd = () => {
               {step === 3 && (
                 <>
                   <h3 className="text-2xl font-bold k-display">Who sent it?</h3>
+                  {suppliers.length > 0 && (
+                    <Field label="Pick a saved supplier" hint="The details fill in by themselves, and this stock is added to that supplier's purchases. Or type a new one below.">
+                      <select className="k-field" value={f.supplierId} onChange={(e) => pickSupplier(e.target.value)}>
+                        <option value="">Not in the list</option>
+                        {suppliers.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+                      </select>
+                    </Field>
+                  )}
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                     <div className="sm:col-span-2"><Field label="Supplier name"><input className="k-field" name="supplierName" value={f.supplierName} onChange={set} autoFocus /></Field></div>
                     <Field label="Phone"><input className="k-field" name="supplierPhone" value={f.supplierPhone} onChange={set} placeholder="+91" /></Field>

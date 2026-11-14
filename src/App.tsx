@@ -33,6 +33,7 @@ const pageLoaders = {
   StockSummary: () => import('./components/warehouse/StockSummary').then((m) => ({ default: m.StockSummary })),
   WarrantyView: () => import('./components/warranty/WarrantyView').then((m) => ({ default: m.WarrantyView })),
   WarrantyCardView: () => import('./components/warranty/WarrantyCardView').then((m) => ({ default: m.WarrantyCardView })),
+  SuppliersView: () => import('./components/suppliers/SuppliersView').then((m) => ({ default: m.SuppliersView })),
   ClaimsView: () => import('./components/claims/ClaimsView').then((m) => ({ default: m.ClaimsView })),
   TrackingView: () => import('./components/tracking/TrackingView').then((m) => ({ default: m.TrackingView })),
   InventoryAdd: () => import('./components/inventory/InventoryAdd').then((m) => ({ default: m.InventoryAdd })),
@@ -54,6 +55,7 @@ const StockSummary = lazy(pageLoaders.StockSummary);
 const WarrantyView = lazy(pageLoaders.WarrantyView);
 const WarrantyCardView = lazy(pageLoaders.WarrantyCardView);
 const ClaimsView = lazy(pageLoaders.ClaimsView);
+const SuppliersView = lazy(pageLoaders.SuppliersView);
 const TrackingView = lazy(pageLoaders.TrackingView);
 const InventoryAdd = lazy(pageLoaders.InventoryAdd);
 const InventoryList = lazy(pageLoaders.InventoryList);
@@ -432,6 +434,7 @@ export function App() {
           )}
 
           {activeTab === 'inventory-add' && <InventoryAdd />}
+          {activeTab === 'suppliers' && <SuppliersView />}
           {activeTab === 'inventory-list' && <InventoryList />}
           {activeTab === 'inventory-search' && <InventorySearch />}
           {activeTab === 'generator' && (

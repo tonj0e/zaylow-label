@@ -583,6 +583,7 @@ export class DataService {
     po_no?: string | null;
     sku?: string | null;
     total_cartons?: number;
+    supplier_id?: string | null;
   }) {
     const { data, error } = await anySupabase
       .from('inventory_batches')
@@ -603,6 +604,7 @@ export class DataService {
         po_no: batchData.po_no ?? null,
         sku: batchData.sku ?? null,
         total_cartons: batchData.total_cartons ?? null,
+        ...(batchData.supplier_id ? { supplier_id: batchData.supplier_id } : {}),
       })
       .select()
       .single();

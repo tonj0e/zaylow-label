@@ -22,6 +22,7 @@ import {
   Clock,
   Truck,
   Award,
+  Store,
   X,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
@@ -50,7 +51,8 @@ export type ActiveTab =
   | 'warranty-cards'
   | 'tracking'
   | 'erp'
-  | 'shipping-map';
+  | 'shipping-map'
+  | 'suppliers';
 
 interface SidebarProps {
   activeTab: ActiveTab;
@@ -123,6 +125,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
           ] as Item[],
         }]
       : []),
+    { title: 'Suppliers', items: [{ tab: 'suppliers', label: 'Suppliers', icon: Store }] },
     {
       title: 'Warranty',
       items: [
