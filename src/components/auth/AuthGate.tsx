@@ -17,7 +17,7 @@ export const AuthGate: React.FC<{ children: React.ReactNode }> = ({ children }) 
   const [show, setShow] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
-  const [intro, setIntro] = useState(() => !introPlayed && !window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+  const [intro, setIntro] = useState(() => !introPlayed);
 
   useEffect(() => {
     let alive = true;
@@ -92,7 +92,8 @@ export const AuthGate: React.FC<{ children: React.ReactNode }> = ({ children }) 
         @keyframes zl-splash-out{to{opacity:0;visibility:hidden}}
         @keyframes zl-card{from{opacity:0;transform:translateY(28px) scale(.97)}to{opacity:1;transform:none}}
         @keyframes zl-spin{from{transform:rotate(-180deg) scale(.6)}to{transform:none}}
-        @media (prefers-reduced-motion: reduce){.zl-splash,.zl-logo,.zl-card,.zl-mark{animation:none!important}.zl-splash{display:none}}
+        @keyframes zl-fade{from{opacity:0}to{opacity:1}}
+        @media (prefers-reduced-motion: reduce){.zl-logo{animation:zl-fade .6s ease both,zl-away .01s linear 1.35s forwards}.zl-card{animation:zl-fade .5s ease 1.45s both}.zl-mark{animation:none}}
       `}</style>
     </div>
   );

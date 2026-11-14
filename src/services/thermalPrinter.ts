@@ -1,4 +1,11 @@
 import { StorageService } from './storage';
+import { DataService } from './dataService';
+
+/** Saves Printed in the database (not just this browser), then tells the app to reload its orders */
+const markPrintedEverywhere = (ids: string[]) => {
+  if (!StorageService.getSettings().autoMarkPrintedOnPrint) return;
+  void DataService.markPrinted(ids).then(() => window.dispatchEvent(new Event('zaylow-orders-changed')));
+};
 
 /**
  * Collects all compiled CSS text from the current document's stylesheets.
@@ -138,17 +145,8 @@ export class ThermalPrinterService {
     const doPrint = () => {
       printWindow.print();
 
-      // Mark order as printed if orderId provided (after print dialog closes)
-      if (orderId) {
-        const handleAfterPrint = () => {
-          printWindow.removeEventListener('afterprint', handleAfterPrint);
-          const settings = StorageService.getSettings();
-          if (settings.autoMarkPrintedOnPrint) {
-            StorageService.updateOrderStatus(orderId, 'Printed');
-          }
-        };
-        printWindow.addEventListener('afterprint', handleAfterPrint);
-      }
+      // print() waits until the print window closes, so mark right after it
+      if (orderId) markPrintedEverywhere([orderId]);
     };
 
     // Use a small delay to let fonts & images render before the print dialog
@@ -203,19 +201,7 @@ export class ThermalPrinterService {
     const doPrint = () => {
       printWindow.print();
 
-      // Mark all orders as printed (after print dialog closes)
-      if (labelsHtmlArray.length > 0) {
-        const handleAfterPrint = () => {
-          printWindow.removeEventListener('afterprint', handleAfterPrint);
-          const settings = StorageService.getSettings();
-          if (settings.autoMarkPrintedOnPrint) {
-            labelsHtmlArray.forEach(item => {
-              StorageService.updateOrderStatus(item.orderId, 'Printed');
-            });
-          }
-        };
-        printWindow.addEventListener('afterprint', handleAfterPrint);
-      }
+      markPrintedEverywhere(labelsHtmlArray.map((item) => item.orderId));
     };
 
     if (printWindow.document.readyState === 'complete') {

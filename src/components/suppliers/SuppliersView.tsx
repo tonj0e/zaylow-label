@@ -1,8 +1,8 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Search, RefreshCw, Plus, Phone, X, FileDown, Paperclip, Trash2, Pencil, Store, Download, Loader2 } from 'lucide-react';
+import { Search, RefreshCw, Plus, Phone, X, FileDown, Paperclip, Trash2, Pencil, Store, Download, Loader2, Box, Link2 } from 'lucide-react';
 import {
   SupplierService, KIND_LABEL, friendlyError, totalsFor,
-  type Supplier, type Purchase, type SupplierKind,
+  type Supplier, type Purchase, type SupplierKind, type SupplierCarton,
 } from '../../services/supplierService';
 
 const KINDS = Object.keys(KIND_LABEL) as SupplierKind[];
@@ -156,8 +156,68 @@ const PurchaseForm: React.FC<{ supplier: Supplier; initial?: Purchase; onSaved: 
   );
 };
 
+// ── Link old cartons to a supplier ──────────────────────────────────────────
+const cartonName = (c: SupplierCarton) => c.location || c.products.slice(0, 2).join(', ') || `Carton ${c.id.slice(0, 6)}`;
+const LinkCartons: React.FC<{ supplier: Supplier; all: SupplierCarton[]; names: Map<string, string>; onClose: () => void; onSaved: () => void }> = ({ supplier, all, names, onClose, onSaved }) => {
+  const [q, setQ] = useState('');
+  const [pick, setPick] = useState<Set<string>>(new Set());
+  const [only, setOnly] = useState<'free' | 'all'>('free');
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState('');
+  const rows = useMemo(() => {
+    const t = q.trim().toLowerCase();
+    return all.filter((c) => c.supplier_id !== supplier.id && (only === 'all' || !c.supplier_id) && (!t || cartonName(c).toLowerCase().includes(t) || c.products.some((n) => n.toLowerCase().includes(t)) || c.id.toLowerCase().includes(t)));
+  }, [all, q, only, supplier.id]);
+  const toggle = (id: string) => setPick((p) => { const n = new Set(p); if (n.has(id)) n.delete(id); else n.add(id); return n; });
+  const allShown = rows.length > 0 && rows.every((c) => pick.has(c.id));
+  const save = async () => {
+    setBusy(true); setErr('');
+    try { await SupplierService.linkCartons([...pick], supplier.id); onSaved(); } catch (e) { setErr(friendlyError(e)); } finally { setBusy(false); }
+  };
+  return (
+    <Sheet title={`Link cartons to ${supplier.name}`} onClose={onClose}>
+      <div className="space-y-3">
+        <div className="relative">
+          <Search className="w-4 h-4 k-muted absolute left-3.5 top-1/2 -translate-y-1/2" aria-hidden="true" />
+          <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search by location or product" aria-label="Search cartons" className="k-field" style={{ paddingLeft: '2.4rem' }} />
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <button type="button" className="k-chip" aria-pressed={only === 'free'} onClick={() => setOnly('free')}>No supplier yet</button>
+          <button type="button" className="k-chip" aria-pressed={only === 'all'} onClick={() => setOnly('all')}>All cartons</button>
+          <button type="button" className="text-sm font-semibold ml-auto" onClick={() => setPick(allShown ? new Set() : new Set(rows.map((c) => c.id)))}>{allShown ? 'Clear' : `Select all ${rows.length}`}</button>
+        </div>
+        <ul className="max-h-[46vh] overflow-y-auto space-y-1.5">
+          {rows.map((c) => (
+            <li key={c.id}>
+              <label className="k-card2 rounded-2xl px-3 py-2.5 flex items-center gap-3 cursor-pointer">
+                <input type="checkbox" checked={pick.has(c.id)} onChange={() => toggle(c.id)} className="w-5 h-5 shrink-0" aria-label={`Select ${cartonName(c)}`} />
+                <span className="min-w-0 flex-1">
+                  <span className="block font-semibold truncate">{cartonName(c)}</span>
+                  <span className="block text-xs k-muted truncate">{c.products.slice(0, 2).join(', ') || 'Empty'} · {c.inStock} of {c.total} units left{c.supplier_id ? ` · now: ${names.get(c.supplier_id) || 'another supplier'}` : ''}</span>
+                </span>
+              </label>
+            </li>
+          ))}
+          {rows.length === 0 && <li className="k-muted text-sm py-6 text-center">{only === 'free' ? 'Every carton already has a supplier. Choose “All cartons” to move one.' : 'No carton matches.'}</li>}
+        </ul>
+        {err && <p role="alert" className="text-sm k-bad">{err}</p>}
+        <button type="button" disabled={busy || pick.size === 0} onClick={save} className="k-btn k-btn-lime w-full py-3 text-sm">{busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Link2 className="w-4 h-4" />} {pick.size ? `Link ${pick.size} carton${pick.size === 1 ? '' : 's'}` : 'Pick cartons to link'}</button>
+      </div>
+    </Sheet>
+  );
+};
+
 // ── Supplier page (details + purchases) ─────────────────────────────────────
-const SupplierDetail: React.FC<{ supplier: Supplier; purchases: Purchase[]; onChanged: () => void; onEdit: () => void; onDeleted: () => void; onClose: () => void }> = ({ supplier, purchases, onChanged, onEdit, onDeleted, onClose }) => {
+const SupplierDetail: React.FC<{ supplier: Supplier; names: Map<string, string>; purchases: Purchase[]; onChanged: () => void; onEdit: () => void; onDeleted: () => void; onClose: () => void }> = ({ supplier, names, purchases, onChanged, onEdit, onDeleted, onClose }) => {
+  const [allCartons, setAllCartons] = useState<SupplierCarton[]>([]);
+  const [cartonMsg, setCartonMsg] = useState('');
+  const [linking, setLinking] = useState(false);
+  const loadCartons = useCallback(() => { SupplierService.cartons().then((c) => { setAllCartons(c); setCartonMsg(''); }).catch((e) => setCartonMsg(friendlyError(e))); }, []);
+  useEffect(() => { loadCartons(); }, [loadCartons]);
+  const mine = allCartons.filter((c) => c.supplier_id === supplier.id);
+  const unsold = mine.filter((c) => c.inStock > 0);
+  const unitsLeft = mine.reduce((n, c) => n + c.inStock, 0);
+  const unlink = async (c: SupplierCarton) => { try { await SupplierService.linkCartons([c.id], null); loadCartons(); } catch (e) { setCartonMsg(friendlyError(e)); } };
   const [adding, setAdding] = useState<Purchase | 'new' | null>(null);
   const [msg, setMsg] = useState('');
   const [confirmDel, setConfirmDel] = useState(false);
@@ -223,6 +283,25 @@ const SupplierDetail: React.FC<{ supplier: Supplier; purchases: Purchase[]; onCh
             ))}
           </ul>
         )}
+        <div className="flex items-center justify-between mt-7 mb-2 gap-2">
+          <h4 className="font-semibold">Cartons from this supplier</h4>
+          <button onClick={() => setLinking(true)} className="k-btn k-btn-soft h-10 px-4 text-sm"><Link2 className="w-4 h-4" /> Link old cartons</button>
+        </div>
+        {cartonMsg ? <p role="alert" className="text-sm k-bad mb-2">{cartonMsg}</p> : (
+          <p className="text-sm k-muted mb-2">{mine.length === 0 ? 'No cartons linked yet.' : `${unsold.length} unsold carton${unsold.length === 1 ? '' : 's'} with ${unitsLeft} unit${unitsLeft === 1 ? '' : 's'} left · ${mine.length - unsold.length} sold out`}</p>
+        )}
+        {mine.length > 0 && (
+          <ul className="space-y-2">
+            {[...mine].sort((a, b) => (b.inStock > 0 ? 1 : 0) - (a.inStock > 0 ? 1 : 0) || b.inStock - a.inStock).map((c) => (
+              <li key={c.id} className="k-card2 rounded-2xl p-3 flex items-center gap-3">
+                <Box className="w-4 h-4 k-muted shrink-0" />
+                <div className="min-w-0 flex-1"><p className="font-semibold truncate">{cartonName(c)}</p><p className="text-xs k-muted truncate">{c.products.slice(0, 2).join(', ') || 'Empty'} · {c.inStock} of {c.total} units left</p></div>
+                <span className="text-xs font-semibold rounded-full px-2.5 py-1 shrink-0" style={c.inStock > 0 ? { background: 'var(--lime)', color: '#0a0a0a' } : { background: 'var(--card)' }}>{c.inStock > 0 ? 'Unsold' : 'Sold out'}</span>
+                <button onClick={() => unlink(c)} className="k-btn k-btn-ghost w-9 h-9" aria-label={`Unlink ${cartonName(c)}`}><X className="w-3.5 h-3.5" /></button>
+              </li>
+            ))}
+          </ul>
+        )}
         <div className="mt-6 pt-4 border-t k-rule flex items-center justify-between gap-3">
           {confirmDel ? (
             <>
@@ -234,6 +313,7 @@ const SupplierDetail: React.FC<{ supplier: Supplier; purchases: Purchase[]; onCh
           )}
         </div>
       </Sheet>
+      {linking && <LinkCartons supplier={supplier} all={allCartons} names={names} onClose={() => setLinking(false)} onSaved={() => { setLinking(false); loadCartons(); }} />}
       {adding && <PurchaseForm supplier={supplier} initial={adding === 'new' ? undefined : adding} onClose={() => setAdding(null)} onSaved={() => { setAdding(null); onChanged(); }} />}
     </>
   );
@@ -423,7 +503,7 @@ export const SuppliersView: React.FC = () => {
       </div>
 
       {form && <SupplierForm initial={form === 'new' ? undefined : form} onClose={() => setForm(null)} onSaved={(s) => { setForm(null); setOpenId(s.id); void load(); }} />}
-      {open && !form && <SupplierDetail supplier={open} purchases={byId.get(open.id) || []} onChanged={load} onEdit={() => setForm(open)} onDeleted={() => { setOpenId(null); void load(); }} onClose={() => setOpenId(null)} />}
+      {open && !form && <SupplierDetail supplier={open} names={new Map(suppliers.map((x) => [x.id, x.name]))} purchases={byId.get(open.id) || []} onChanged={load} onEdit={() => setForm(open)} onDeleted={() => { setOpenId(null); void load(); }} onClose={() => setOpenId(null)} />}
       {report && <ReportSheet suppliers={suppliers} purchases={purchases} onClose={() => setReport(false)} />}
     </div>
   );

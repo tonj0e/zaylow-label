@@ -7,6 +7,8 @@ import QRCode from 'qrcode';
 import { DataService } from '../../services/dataService';
 import { useCached } from '../../hooks/useCached';
 import { CACHE } from '../../services/prefetch';
+import { SupplierPicker } from '../suppliers/SupplierPicker';
+import { SupplierService } from '../../services/supplierService';
 import { PriceService, priceKey, type PriceMap } from '../../services/priceService';
 
 interface Carton {
@@ -14,6 +16,7 @@ interface Carton {
   location: string | null;
   created_at: string;
   updated_at: string;
+  supplier_id?: string | null;
 }
 
 interface Product {
@@ -310,6 +313,8 @@ export const CartonsView = () => {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [search, setSearch] = useState('');
   const [newLocation, setNewLocation] = useState('');
+  const [newSupplier, setNewSupplier] = useState<string | null>(null);
+  const [supplierMsg, setSupplierMsg] = useState('');
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState('');
   const [justCreated, setJustCreated] = useState<Carton | null>(null);
@@ -385,7 +390,8 @@ export const CartonsView = () => {
     try {
       const carton = await DataService.addCarton(newLocation.trim() || null);
       if (!carton) { setCreateError('Could not create the carton. Try again.'); return; }
-      setNewLocation(''); setJustCreated(carton);
+      if (newSupplier) { try { await SupplierService.linkCartons([carton.id], newSupplier); } catch (e: any) { setCreateError(e?.message || 'The carton was made, but the supplier could not be saved.'); } }
+      setNewLocation(''); setNewSupplier(null); setJustCreated(carton);
       await load(); select(carton.id); setQrCarton(carton);
     } catch (err: any) {
       setCreateError(err?.message || 'Could not create the carton. Try again.');
@@ -451,6 +457,7 @@ export const CartonsView = () => {
               {creating ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />} {creating ? 'Creating…' : 'Create carton'}
             </button>
           </div>
+          <div className="mt-3"><SupplierPicker value={newSupplier} onChange={setNewSupplier} label="Supplier (optional)" /></div>
         </form>
         {createError && <p role="alert" className="text-sm font-medium mt-3 flex items-center gap-2 k-bad"><AlertCircle className="w-4 h-4" />{createError}</p>}
         {justCreated && (
@@ -554,6 +561,10 @@ export const CartonsView = () => {
                         <p className="text-sm k-muted mt-1">Code <span className="font-mono font-semibold" style={{ color: 'var(--ink)' }}>{shortCode(selected.id)}</span> · made {niceDate(selected.created_at)}{!selected.location && <> · <button onClick={() => { setEditing(true); setEditLocation(''); }} className="underline font-semibold" style={{ color: 'var(--ink)' }}>Add a location</button></>}</p>
                       </>
                     )}
+                  </div>
+                  <div className="basis-full order-last sm:order-none sm:basis-72">
+                    <SupplierPicker key={selected.id} value={selected.supplier_id ?? null} label="Supplier" onChange={async (id) => { setSupplierMsg(''); try { await SupplierService.linkCartons([selected.id], id); await load(); } catch (e: any) { setSupplierMsg(e?.message?.includes('supplier') ? 'Run the carton supplier SQL in Supabase first.' : (e?.message || 'Could not save the supplier.')); } }} />
+                    {supplierMsg && <p role="alert" className="text-sm k-bad mt-1">{supplierMsg}</p>}
                   </div>
                   <div className="flex gap-2 shrink-0">
                     <button onClick={() => setQrCarton(selected)} className="k-btn k-btn-soft px-4 py-2.5 text-sm"><QrCode className="w-4 h-4" /> Carton label</button>

@@ -4,6 +4,9 @@ import type { Database } from '../types/supabase'; // We'll assume a generated t
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || 'https://placeholder.supabase.co';
 const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY || import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY || 'placeholder-key';
 
-export const supabase = createClient<Database>(supabaseUrl, supabaseAnonKey);
+export const supabase = createClient<Database>(supabaseUrl, supabaseAnonKey, {
+  // stay signed in across restarts and renew the sign-in by itself (also when the tab was asleep)
+  auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: false },
+});
 
 console.log(`🔌 Supabase Client Initialized. Configured URL: ${supabaseUrl}`);

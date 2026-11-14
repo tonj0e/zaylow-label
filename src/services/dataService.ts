@@ -280,6 +280,18 @@ export class DataService {
     }
   }
 
+  /** After a label is printed: moves still-to-print orders to Printed in the database. Shipped, delivered and other orders stay as they are. */
+  static async markPrinted(ids: string[]): Promise<boolean> {
+    if (!ids.length) return true;
+    const { error } = await anySupabase
+      .from('orders')
+      .update({ status: 'Printed' as any })
+      .in('inventory_id', ids)
+      .in('status', ['Pending', 'Processing', 'Label Generated']);
+    if (error) { console.error('Could not mark as printed', error); return false; }
+    return true;
+  }
+
   static async updateOrderStatus(id: string, status: OrderStatus): Promise<boolean> {
     try {
       let updatePayload: any = { status: status as any };

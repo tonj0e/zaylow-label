@@ -15,6 +15,10 @@ export interface Purchase {
   cartons: number; units_per_carton?: number | null; quantity?: number | null; price_per_carton?: number | null;
   total_paid: number; bill_path?: string | null; bill_name?: string | null; batch_id?: string | null; notes?: string | null;
 }
+export interface SupplierCarton {
+  id: string; location: string | null; created_at: string; supplier_id: string | null;
+  inStock: number; total: number; products: string[];
+}
 export type SupplierInput = Omit<Supplier, 'id' | 'created_at'>;
 export type PurchaseInput = Omit<Purchase, 'id' | 'created_at'>;
 
@@ -23,6 +27,7 @@ const num = (v: unknown) => (v === null || v === undefined || v === '' ? 0 : Num
 /** One clear sentence for the usual cause: the owner has not run the supplier SQL yet */
 export const friendlyError = (e: any): string => {
   const m = String(e?.message || e || '');
+  if (/supplier_id/i.test(m) && /column|schema cache/i.test(m)) return 'Cartons cannot be linked to suppliers yet. Run the carton supplier SQL in Supabase first.';
   if (/relation .*(suppliers|supplier_purchases)|schema cache|does not exist|42P01|PGRST205/i.test(m)) return 'The supplier tables are not in the database yet. Run the supplier SQL in Supabase first.';
   if (/bucket|storage/i.test(m)) return 'The bill storage is not set up yet. Run the supplier SQL in Supabase first.';
   return m || 'Something went wrong. Try again.';
@@ -68,6 +73,34 @@ export const SupplierService = {
     const { data, error } = await q.select().single();
     if (error) throw error;
     return data as Purchase;
+  },
+  /** Every carton with how many units are still in stock, so unsold cartons can be shown */
+  async cartons(): Promise<SupplierCarton[]> {
+    const { data: cs, error } = await db.from('cartons').select('*').order('created_at', { ascending: false });
+    if (error) throw error;
+    const left = new Map<string, { inStock: number; total: number; names: Map<string, number> }>();
+    for (let from = 0; ; from += 1000) {
+      const { data, error: e } = await db.from('inventory_items').select('carton_id, product_name, status').not('carton_id', 'is', null).order('id').range(from, from + 999);
+      if (e) throw e;
+      (data || []).forEach((r: any) => {
+        const c = left.get(r.carton_id) || { inStock: 0, total: 0, names: new Map<string, number>() };
+        c.total += 1;
+        if (r.status === 'In Stock') c.inStock += 1;
+        if (r.product_name) c.names.set(r.product_name, (c.names.get(r.product_name) || 0) + 1);
+        left.set(r.carton_id, c);
+      });
+      if (!data || data.length < 1000) break;
+    }
+    return ((cs || []) as any[]).map((c) => {
+      const l = left.get(c.id);
+      return { id: c.id, location: c.location ?? null, created_at: c.created_at, supplier_id: c.supplier_id ?? null, inStock: l?.inStock ?? 0, total: l?.total ?? 0, products: l ? [...l.names.keys()] : [] };
+    });
+  },
+  /** Sets (or clears, with null) the supplier of some cartons */
+  async linkCartons(ids: string[], supplierId: string | null): Promise<void> {
+    if (!ids.length) return;
+    const { error } = await db.from('cartons').update({ supplier_id: supplierId, updated_at: new Date().toISOString() }).in('id', ids);
+    if (error) throw error;
   },
   async removePurchase(p: Purchase): Promise<void> {
     if (p.bill_path) await db.storage.from(BUCKET).remove([p.bill_path]);

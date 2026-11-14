@@ -2,7 +2,7 @@ import { lazy, Suspense, useState, useEffect, useLayoutEffect, useRef } from 're
 import { ErpService, isErpReady, loadErpConfig } from './services/erpService';
 import type { ActiveTab } from './components/layout/Sidebar';
 import { prefetchAll } from './services/prefetch';
-import { fetchCached } from './services/swrCache';
+import { fetchCached, invalidate } from './services/swrCache';
 import { PageSkeleton } from './components/common/PageSkeleton';
 import { MobileNav } from './components/layout/MobileNav';
 import { Sidebar } from './components/layout/Sidebar';
@@ -155,6 +155,13 @@ export function App() {
     const warm = setTimeout(() => { Object.values(pageLoaders).forEach((load) => { void load(); }); }, 1200); // then the page files
     const mapData = setTimeout(() => { void import('./data/inPincodes.json'); void import('./data/indiaDistricts.json'); }, 4000); // and the map's pin codes and districts, so the map opens at once
     return () => { clearTimeout(warm); clearTimeout(mapData); };
+  }, []);
+
+  // A label printed from the Label generator saved Printed in the database: reload the orders now
+  useEffect(() => {
+    const reload = () => { invalidate('orders-all'); void fetchOrders(); };
+    window.addEventListener('zaylow-orders-changed', reload);
+    return () => window.removeEventListener('zaylow-orders-changed', reload);
   }, []);
 
   // Refresh orders whenever the user navigates back to orders or dashboard
