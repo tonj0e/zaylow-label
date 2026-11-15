@@ -2,6 +2,7 @@ import { InstallApp } from '../auth/InstallApp';
 import React, { useState } from 'react';
 import {
   LayoutDashboard,
+  Sparkles,
   Package,
   Printer,
   UploadCloud,
@@ -52,7 +53,8 @@ export type ActiveTab =
   | 'tracking'
   | 'erp'
   | 'shipping-map'
-  | 'suppliers';
+  | 'suppliers'
+  | 'agent';
 
 interface SidebarProps {
   activeTab: ActiveTab;
@@ -126,6 +128,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
         }]
       : []),
     { title: 'Suppliers', items: [{ tab: 'suppliers', label: 'Suppliers', icon: Store }] },
+    { title: 'Assistant', items: [{ tab: 'agent', label: 'AI assistant', icon: Sparkles }] },
     {
       title: 'Warranty',
       items: [

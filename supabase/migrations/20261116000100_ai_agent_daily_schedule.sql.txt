@@ -1,0 +1,14 @@
+-- OPTIONAL: make the daily report run by itself every night at 9:00 pm India time (15:30 UTC).
+-- Do this ONLY after the ai-agent function is deployed and the AI_API_KEY secret is set.
+-- 1) Supabase > Database > Extensions: turn ON "pg_cron" and "pg_net".
+-- 2) Replace PASTE_SERVICE_ROLE_KEY below with the service_role key (Project Settings > API). Never share it.
+-- 3) Run in SQL Editor. (Project ref below is yours: gmbskdhdewacvsijqgxi)
+select cron.schedule(
+  'zaylow-daily-report', '30 15 * * *',
+  $$ select net.http_post(
+       url := 'https://gmbskdhdewacvsijqgxi.supabase.co/functions/v1/ai-agent-',
+       headers := jsonb_build_object('Content-Type','application/json','Authorization','Bearer PASTE_SERVICE_ROLE_KEY'),
+       body := '{"mode":"report","language":"en"}'::jsonb
+     ) $$
+);
+-- To stop it later:  select cron.unschedule('zaylow-daily-report');

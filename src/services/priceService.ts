@@ -27,7 +27,11 @@ export class PriceService {
     if (tableMissing()) return { prices: local, shared: false };
     try {
       const { data, error } = await anySupabase.from('product_prices').select('product_key, prepaid_price');
-      if (error) { markMissing(true); return { prices: local, shared: false }; }
+      if (error) {
+        // only a missing table means "use this browser for a while"; a sign-in hiccup (401) must not
+        if (/does not exist|schema cache|42P01|PGRST205/i.test(String(error.message || ''))) markMissing(true);
+        return { prices: local, shared: false };
+      }
       markMissing(false);
       const db: PriceMap = {};
       (data || []).forEach((r: { product_key: string; prepaid_price: number }) => { db[r.product_key] = Number(r.prepaid_price) || 0; });
@@ -45,7 +49,7 @@ export class PriceService {
     writeLocal(local); // always keep a local copy too
     try {
       const { error } = await anySupabase.from('product_prices').upsert({ product_key: key, product_name: name.trim(), prepaid_price: price, updated_at: new Date().toISOString() }, { onConflict: 'product_key' });
-      markMissing(!!error);
+      if (error && /does not exist|schema cache|42P01|PGRST205/i.test(String(error.message || ''))) markMissing(true);
       return error ? 'browser' : 'shared';
     } catch {
       return 'browser';

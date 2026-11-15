@@ -3,6 +3,7 @@ import { ErpService, isErpReady, loadErpConfig } from './services/erpService';
 import type { ActiveTab } from './components/layout/Sidebar';
 import { prefetchAll } from './services/prefetch';
 import { fetchCached, invalidate } from './services/swrCache';
+import { logView, installErrorLogging } from './services/activityLog';
 import { PageSkeleton } from './components/common/PageSkeleton';
 import { MobileNav } from './components/layout/MobileNav';
 import { Sidebar } from './components/layout/Sidebar';
@@ -33,6 +34,7 @@ const pageLoaders = {
   StockSummary: () => import('./components/warehouse/StockSummary').then((m) => ({ default: m.StockSummary })),
   WarrantyView: () => import('./components/warranty/WarrantyView').then((m) => ({ default: m.WarrantyView })),
   WarrantyCardView: () => import('./components/warranty/WarrantyCardView').then((m) => ({ default: m.WarrantyCardView })),
+  AgentView: () => import('./components/agent/AgentView').then((m) => ({ default: m.AgentView })),
   SuppliersView: () => import('./components/suppliers/SuppliersView').then((m) => ({ default: m.SuppliersView })),
   ClaimsView: () => import('./components/claims/ClaimsView').then((m) => ({ default: m.ClaimsView })),
   TrackingView: () => import('./components/tracking/TrackingView').then((m) => ({ default: m.TrackingView })),
@@ -56,6 +58,7 @@ const WarrantyView = lazy(pageLoaders.WarrantyView);
 const WarrantyCardView = lazy(pageLoaders.WarrantyCardView);
 const ClaimsView = lazy(pageLoaders.ClaimsView);
 const SuppliersView = lazy(pageLoaders.SuppliersView);
+const AgentView = lazy(pageLoaders.AgentView);
 const TrackingView = lazy(pageLoaders.TrackingView);
 const InventoryAdd = lazy(pageLoaders.InventoryAdd);
 const InventoryList = lazy(pageLoaders.InventoryList);
@@ -88,6 +91,11 @@ export function App() {
   useEffect(() => {
     localStorage.setItem('zaylow_active_tab', activeTab);
   }, [activeTab]);
+
+  // usage + crash log for the AI assistant (section names only, no customer data)
+  const tabRef = useRef<ActiveTab>(activeTab);
+  useEffect(() => { tabRef.current = activeTab; logView(activeTab); }, [activeTab]);
+  useEffect(() => installErrorLogging(() => tabRef.current), []);
 
   // Start Telegram bot polling for two-way commands (/today, /pending, etc.)
   useEffect(() => {
@@ -442,6 +450,7 @@ export function App() {
 
           {activeTab === 'inventory-add' && <InventoryAdd />}
           {activeTab === 'suppliers' && <SuppliersView />}
+          {activeTab === 'agent' && <AgentView />}
           {activeTab === 'inventory-list' && <InventoryList />}
           {activeTab === 'inventory-search' && <InventorySearch />}
           {activeTab === 'generator' && (

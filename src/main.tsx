@@ -1,3 +1,4 @@
+import { logError } from './services/activityLog'
 import { StrictMode, Component } from 'react'
 import type { ErrorInfo, ReactNode } from 'react'
 import { createRoot } from 'react-dom/client'
@@ -23,6 +24,7 @@ class ErrorBoundary extends Component<{ children: ReactNode }, { error: Error | 
 
   componentDidCatch(error: Error, info: ErrorInfo) {
     console.error('[App crash]', error, info);
+    logError(localStorage.getItem('zaylow_active_tab') || 'unknown', `App crash: ${error.message}`);
   }
 
   render() {
