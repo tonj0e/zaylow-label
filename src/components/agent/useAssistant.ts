@@ -12,6 +12,7 @@ export type Status = 'idle' | 'listening' | 'thinking' | 'speaking';
 const SR: any = typeof window !== 'undefined' ? (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition : null;
 const SILENT = 'data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQAAAAA=';
 const NOVELTY = /^(albert|bad news|bahh|bells|boing|bubbles|cellos|deranged|good news|hysterical|jester|organ|pipe organ|superstar|trinoids|whisper|wobble|zarvox|fred|junior|kathy|ralph)\b/i;
+const IOS = typeof navigator !== 'undefined' && (/iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && (navigator as any).maxTouchPoints > 1));
 const store = (k: string, v: string) => { try { localStorage.setItem(k, v); } catch { /* storage unavailable */ } };
 const read = (k: string, d = '') => { try { return localStorage.getItem(k) ?? d; } catch { return d; } };
 
@@ -19,7 +20,7 @@ const read = (k: string, d = '') => { try { return localStorage.getItem(k) ?? d;
 export const useAssistant = () => {
   const [lang, setLang] = useState<AgentLang>(() => (['en', 'ml', 'hi'].includes(read('zaylow_agent_lang')) ? (read('zaylow_agent_lang') as AgentLang) : 'en'));
   const [speak, setSpeak] = useState(() => read('zaylow_agent_speak') === '1');
-  const [engine, setEngine] = useState<'browser' | 'nvidia'>(() => (read('zaylow_agent_engine') === 'nvidia' ? 'nvidia' : 'browser'));
+  const [engine, setEngine] = useState<'browser' | 'nvidia'>(() => (read('zaylow_agent_engine') === 'browser' ? 'browser' : 'nvidia'));
   const [voiceName, setVoiceName] = useState(() => read('zaylow_agent_voice'));
   const [turns, setTurns] = useState<ChatTurn[]>([]);
   const [text, setText] = useState('');
@@ -73,13 +74,23 @@ export const useAssistant = () => {
   useEffect(() => { AiAgentService.status().then((s) => setTg(s.telegram)).catch(() => setTg(null)); }, []);
   useEffect(() => () => { cancelled.current = true; recRef.current?.abort?.(); speakToken.current++; window.speechSynthesis?.cancel(); audioRef.current?.pause(); }, []);
 
-  /** Call from a tap: makes the phone allow sound later, when the answer arrives */
+  /** iPhone only: a tap must "unlock" sound that starts later. Android and desktop do not need it, and playing sound
+   *  while the microphone starts can block the microphone, so nothing is played there. */
   const unlockAudio = () => {
+    if (!IOS) return;
     try {
       if (!audioRef.current) audioRef.current = new Audio();
-      audioRef.current.src = SILENT;
-      void audioRef.current.play().catch(() => undefined);
+      const a = audioRef.current;
+      a.src = SILENT;
+      void a.play().then(() => a.pause()).catch(() => undefined);
     } catch { /* no audio on this device */ }
+  };
+  /** One empty, silent sentence from inside a tap: phones then allow the phone voice to speak later */
+  const speechUnlocked = useRef(false);
+  const unlockSpeech = () => {
+    if (speechUnlocked.current || !window.speechSynthesis) return;
+    speechUnlocked.current = true;
+    try { const u = new SpeechSynthesisUtterance(' '); u.volume = 0; window.speechSynthesis.speak(u); } catch { /* no voice on this device */ }
   };
   const stopSpeaking = useCallback(() => {
     speakToken.current++;
@@ -90,17 +101,25 @@ export const useAssistant = () => {
   }, []);
 
   const browserSay = (t: string) => {
-    if (!window.speechSynthesis) return;
-    window.speechSynthesis.cancel();
-    const u = new SpeechSynthesisUtterance(t.replace(/[*_#`]/g, ''));
-    u.lang = speechLang;
-    const v = langVoices.find((x) => x.name === voiceName) || best;
-    u.rate = 0.95;
-    if (v) u.voice = v;
-    u.onstart = () => setSpeaking(true);
-    u.onend = () => setSpeaking(false);
-    u.onerror = () => setSpeaking(false);
-    window.speechSynthesis.speak(u);
+    const synth = window.speechSynthesis;
+    if (!synth) { setVoiceNote('This device has no phone voice. Use the natural voice in settings.'); return; }
+    const token = speakToken.current;
+    synth.cancel();
+    // phones stop long sentences and drop a sentence spoken right after cancel(): short pieces, a tiny wait
+    const parts = (t.replace(/[*_#`]/g, '').match(/[^.!?।]+[.!?।]*\s*/g) || [t]).reduce<string[]>((acc, sn) => { const last = acc[acc.length - 1]; if (last && (last + sn).length < 170) acc[acc.length - 1] = last + sn; else acc.push(sn); return acc; }, []).slice(0, 14);
+    setTimeout(() => {
+      if (token !== speakToken.current) return;
+      const v = langVoices.find((x) => x.name === voiceName) || best;
+      parts.forEach((part, i) => {
+        const u = new SpeechSynthesisUtterance(part.trim());
+        u.lang = speechLang; u.rate = 0.95;
+        if (v) u.voice = v;
+        if (i === 0) u.onstart = () => setSpeaking(true);
+        if (i === parts.length - 1) u.onend = () => setSpeaking(false);
+        u.onerror = (e: any) => { setSpeaking(false); if (e?.error === 'not-allowed') setVoiceNote('Your phone blocked the phone voice. Tap the speaker button, or choose Natural voice in settings.'); else if (e?.error && e.error !== 'canceled' && e.error !== 'interrupted') setVoiceNote(`The phone voice stopped (${e.error}). Choose Natural voice in settings.`); };
+        synth.speak(u);
+      });
+    }, 80);
   };
   // the natural voice reads only the AI's own words, never the returned-customer list (names and phones)
   const spokenPart = (t: string) => t.split(/\n\s*Returned customers/i)[0].replace(/[*_#`•]/g, '').replace(/\s*\n+\s*/g, '. ').trim();
@@ -148,7 +167,7 @@ export const useAssistant = () => {
   const ask = async (q: string) => {
     const question = q.trim();
     if (!question || busy) return;
-    stopSpeaking(); unlockAudio();
+    stopSpeaking(); unlockAudio(); unlockSpeech();
     setErr(''); setText(''); setBusy(true);
     const history = turns;
     setTurns((t) => [...t, { role: 'user', content: question }]);
@@ -164,11 +183,14 @@ export const useAssistant = () => {
   const mic = () => {
     if (listening) { recRef.current?.stop(); return; }
     if (!SR) { setErr('This browser cannot listen. Use Chrome or Safari, or type your question.'); return; }
-    stopSpeaking(); unlockAudio();
+    stopSpeaking(); unlockAudio(); unlockSpeech();
+    try { if (recRef.current) { recRef.current.__dead = true; recRef.current.abort?.(); } } catch { /* old listener already gone */ }
     const r = new SR();
     r.lang = speechLang; r.interimResults = true; r.continuous = false; r.maxAlternatives = 1;
     let said = ''; let sent = false;
     cancelled.current = false;
+    const timers: ReturnType<typeof setTimeout>[] = [];
+    const clearTimers = () => { timers.forEach(clearTimeout); timers.length = 0; };
     // the words appear while you speak; when you stop, the question is sent by itself
     r.onresult = (ev: any) => {
       let t = '';
@@ -177,22 +199,31 @@ export const useAssistant = () => {
       setText(said);
     };
     r.onerror = (ev: any) => {
-      setListening(false);
-      if (ev?.error === 'not-allowed') setErr('Microphone is blocked. Allow the microphone for this site and try again.');
-      else if (ev?.error !== 'aborted' && ev?.error !== 'no-speech') setErr('Could not hear you. Try again.');
+      if (r.__dead) return;
+      clearTimers(); setListening(false);
+      const code = String(ev?.error || '');
+      if (code === 'not-allowed' || code === 'service-not-allowed') setErr('Microphone is blocked. Allow the microphone for this site in the browser settings, then tap again.');
+      else if (code === 'audio-capture') setErr('The microphone is busy or missing. Close other apps that use it, then tap again.');
+      else if (code === 'network') setErr('Listening needs the internet. Check your connection and tap again.');
+      else if (code === 'no-speech') setErr('I did not hear anything. Tap the green button and speak.');
+      else if (code !== 'aborted') setErr(`Could not hear you (${code || 'unknown'}). Tap and try again.`);
     };
     r.onend = () => {
-      setListening(false);
+      if (r.__dead) return; // an old listener ending late must not send its words or switch the new one off
+      clearTimers(); setListening(false);
       if (!sent && !cancelled.current && said) { sent = true; void askRef.current(said); }
       else if (cancelled.current) setText('');
+      else if (!said) setErr((e) => e || 'I did not hear anything. Tap the green button and speak.');
     };
+    // some phones leave the microphone "listening" forever (nothing is heard, no end event): stop it after 12 seconds of silence
+    timers.push(setTimeout(() => { if (!said && recRef.current === r) { try { r.abort(); } catch { /* already stopped */ } setListening(false); setErr('I did not hear anything. Tap the green button and speak.'); } }, 12000));
     recRef.current = r; setErr(''); setText(''); setListening(true);
-    try { r.start(); } catch { setListening(false); }
+    try { r.start(); } catch { clearTimers(); setListening(false); setErr('The microphone could not start. Tap again.'); }
   };
   const cancelListening = () => { cancelled.current = true; recRef.current?.abort?.(); setListening(false); setText(''); };
 
   const makeReport = async () => {
-    stopSpeaking(); unlockAudio();
+    stopSpeaking(); unlockAudio(); unlockSpeech();
     setMakingReport(true); setErr('');
     try {
       const r = await AiAgentService.makeReport(lang);

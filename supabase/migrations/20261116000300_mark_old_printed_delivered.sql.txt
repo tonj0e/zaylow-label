@@ -1,0 +1,28 @@
+-- MARK OLD "PRINTED" ORDERS AS DELIVERED (owner's decision, 15 Nov 2026)
+-- These orders were really delivered, but they have no tracking number so the status never moved on.
+-- This changes ONLY the order status and the stock status. Warranty dates are NOT touched,
+-- and no order is counted as "delivered today".
+-- Run in Supabase > SQL Editor. Run PART 1 first, check the numbers, then PART 2.
+
+-- PART 1: PREVIEW (changes nothing). Expect about 84 orders and about Rs 25,518 COD.
+select count(*) as orders_to_change,
+       coalesce(sum(case when payment_type = 'COD' then cod_amount end), 0) as cod_rs
+from public.orders
+where status = 'Printed' and created_at < now() - interval '7 days';
+
+-- PART 2: CHANGE (a backup copy is kept in backup_printed_to_delivered, so it can be undone)
+create table if not exists public.backup_printed_to_delivered as
+  select inventory_id, status, updated_at from public.orders
+  where status = 'Printed' and created_at < now() - interval '7 days';
+
+begin;
+  update public.inventory_items set status = 'Delivered', updated_at = now()
+  where order_id in (select inventory_id from public.backup_printed_to_delivered)
+    and status in ('Reserved', 'Packed', 'Shipped');
+  update public.orders set status = 'Delivered', updated_at = now()
+  where inventory_id in (select inventory_id from public.backup_printed_to_delivered) and status = 'Printed';
+commit;
+
+-- UNDO (only if needed):
+-- update public.orders o set status = 'Printed', updated_at = b.updated_at
+--   from public.backup_printed_to_delivered b where o.inventory_id = b.inventory_id;

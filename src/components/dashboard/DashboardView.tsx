@@ -406,6 +406,8 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
       curTotal,
       trend: prevTotal > 0 ? Math.round(((curTotal - prevTotal) / prevTotal) * 100) : null,
       codTotal: sum(cur.map((c) => c.cod)),
+      // money really still to come in: COD of parcels with the courier (same number as the Tracking page)
+      codOnTheWay: sum(orders.filter((o) => o.status === 'Shipped' && o.paymentType === 'COD').map((o) => Number(o.codAmount) || 0)),
       salesTotal: sum(cur.map((c) => c.sales)),
       avgCod: cod.length ? sum(cod.map((o) => o.codAmount)) / cod.length : 0,
       prepaid: rangeOrders.length - cod.length,
@@ -547,7 +549,8 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
               <div className="k-card p-4">
                 <p className="text-xs k-muted flex items-center gap-1.5"><IndianRupee className="w-3.5 h-3.5" /> Sales, last {range} days</p>
                 <p className="k-display text-3xl font-bold leading-none mt-3"><Count value={m.salesTotal} money /></p>
-                <p className="text-xs k-muted mt-2">{inr(m.codTotal)} to collect</p>
+                <p className="text-xs k-muted mt-2">{inr(m.codOnTheWay)} still to collect</p>
+                <p className="text-xs k-muted">{inr(m.codTotal)} COD ordered</p>
               </div>
             </section>
             <section className="k-card p-4" aria-label="Orders per day">
@@ -598,7 +601,8 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             <div className="k-card p-4 md:p-5">
               <div className="flex items-center gap-2 text-sm k-muted"><IndianRupee className="w-4 h-4" /> Sales, last {range} days</div>
               <p className="k-display text-4xl font-bold leading-none mt-3"><Count value={m.salesTotal} money /></p>
-              <p className="text-xs k-muted mt-2">{inr(m.codTotal)} still to collect on delivery</p>
+              <p className="text-xs k-muted mt-2">{inr(m.codOnTheWay)} still to collect on delivery</p>
+              <p className="text-xs k-muted">{inr(m.codTotal)} COD ordered in these {range} days</p>
             </div>
           </section>
         </>)}

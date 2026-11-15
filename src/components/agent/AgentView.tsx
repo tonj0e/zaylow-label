@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { ArrowUp, Sparkles, Volume2, VolumeX, FileText, SlidersHorizontal, Mic, ShoppingBag, Boxes, AlertTriangle, Undo2, Activity, Clock3, Copy, Check, X } from 'lucide-react';
 import { useAssistant } from './useAssistant';
 import { AGENT_CSS, Orb, Thinking, Rich, Sheet, SettingsPanel, ReportsPanel } from './AgentParts';
@@ -13,8 +13,37 @@ const TILES = [
 ];
 const STATUS_TEXT = { idle: 'Ready', listening: 'Listening…', thinking: 'Thinking…', speaking: 'Speaking…' } as const;
 
+
+/** Phone only: the assistant fills exactly the space between the top bar and the bottom menu (measured, so the iPhone home bar
+ *  and the keyboard are included) and the ask bar can never hide behind the menu. */
+const usePhoneFrame = () => {
+  const [f, setF] = useState({ phone: false, top: 57, bottom: 70 });
+  useLayoutEffect(() => {
+    const mq = window.matchMedia('(max-width: 767px)');
+    const measure = () => {
+      const main = document.querySelector('main');
+      const nav = document.querySelector('nav[aria-label="Main"]');
+      const top = main ? Math.round(main.getBoundingClientRect().top) : 57;
+      const navH = nav ? Math.round(nav.getBoundingClientRect().height) : 70;
+      const vv = window.visualViewport;
+      const keyboard = vv ? Math.max(0, Math.round(window.innerHeight - vv.height - vv.offsetTop)) : 0;
+      setF((o) => { const n = { phone: mq.matches, top, bottom: keyboard > 120 ? keyboard : navH }; return o.phone === n.phone && o.top === n.top && o.bottom === n.bottom ? o : n; });
+    };
+    measure();
+    window.addEventListener('resize', measure);
+    window.visualViewport?.addEventListener('resize', measure);
+    window.visualViewport?.addEventListener('scroll', measure);
+    const ro = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(measure) : null;
+    const nav = document.querySelector('nav[aria-label="Main"]');
+    if (ro && nav) ro.observe(nav, { box: 'border-box' });
+    return () => { window.removeEventListener('resize', measure); window.visualViewport?.removeEventListener('resize', measure); window.visualViewport?.removeEventListener('scroll', measure); ro?.disconnect(); };
+  }, []);
+  return f;
+};
+
 export const AgentView: React.FC = () => {
   const a = useAssistant();
+  const frame = usePhoneFrame();
   const [sheet, setSheet] = useState<'settings' | 'reports' | null>(null);
   const [copied, setCopied] = useState<number | null>(null);
   const endRef = useRef<HTMLDivElement>(null);
@@ -36,10 +65,10 @@ export const AgentView: React.FC = () => {
   );
 
   return (
-    <div className="kdash ag-page" style={{ background: 'transparent' }}>
+    <div className="kdash ag-page" style={frame.phone ? { position: 'fixed', left: 0, right: 0, top: frame.top, bottom: frame.bottom, zIndex: 20, background: 'var(--bg)', display: 'flex', flexDirection: 'column' } : { background: 'transparent' }}>
       <style>{AGENT_CSS}</style>
-      <div className="mx-auto w-full max-w-6xl px-4 md:px-6 lg:grid lg:grid-cols-[minmax(0,1fr)_20.5rem] lg:gap-6">
-        <section className="flex flex-col min-w-0 min-h-[calc(100dvh-57px-96px)] md:min-h-[calc(100dvh-57px-16px)]" aria-label="Assistant">
+      <div className={`mx-auto w-full max-w-6xl px-4 md:px-6 lg:grid lg:grid-cols-[minmax(0,1fr)_20.5rem] lg:gap-6 ${frame.phone ? 'flex-1 min-h-0 flex flex-col' : ''}`}>
+        <section className={`flex flex-col min-w-0 ${frame.phone ? 'flex-1 min-h-0' : 'min-h-[calc(100dvh-57px-16px)]'}`} aria-label="Assistant">
           {/* top bar */}
           <header className="flex items-center justify-between gap-3 py-3 md:pt-5">
             <div className="flex items-center gap-3 min-w-0">
@@ -57,7 +86,7 @@ export const AgentView: React.FC = () => {
           </header>
 
           {/* stage */}
-          <div className="flex-1 flex flex-col">
+          <div className={`flex-1 flex flex-col ${frame.phone ? 'min-h-0 overflow-y-auto overscroll-contain' : ''}`}>
             {empty ? (
               a.listening ? <div className="my-auto py-4">{listeningPanel}</div> : (
                 <div className="flex-1 flex flex-col justify-center py-2 sm:py-4 ag-in">
@@ -100,7 +129,7 @@ export const AgentView: React.FC = () => {
 
           {/* notes and the ask bar, stuck above the phone menu */}
           {!a.listening && (
-            <div className="sticky z-20 max-md:bottom-[-20px] md:bottom-2 pt-2 pb-2" style={{ background: 'var(--bg)' }}>
+            <div className={frame.phone ? 'shrink-0 pt-2 pb-2' : 'sticky z-20 bottom-2 pt-2 pb-2'} style={{ background: 'var(--bg)' }}>
               {a.err && <p role="alert" className="text-sm font-medium k-bad mb-2 px-1">{a.err}</p>}
               {a.voiceNote && <p role="status" className="text-xs k-muted mb-2 px-1">{a.voiceNote}</p>}
               <form onSubmit={(e) => { e.preventDefault(); void a.ask(a.text); }} className="flex items-center gap-2">

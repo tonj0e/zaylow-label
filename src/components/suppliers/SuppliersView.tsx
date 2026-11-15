@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Search, RefreshCw, Plus, Phone, X, FileDown, Paperclip, Trash2, Pencil, Store, Download, Loader2, Box, Link2 } from 'lucide-react';
+import { Search, RefreshCw, Plus, Phone, X, FileDown, Paperclip, Trash2, Pencil, Store, Download, Loader2, Box, Link2, Phone as PhoneIcon } from 'lucide-react';
 import {
   SupplierService, KIND_LABEL, friendlyError, totalsFor,
   type Supplier, type Purchase, type SupplierKind, type SupplierCarton,
@@ -8,6 +8,7 @@ import {
 const KINDS = Object.keys(KIND_LABEL) as SupplierKind[];
 const inr = (n: number) => `₹${(Math.round(n * 100) / 100).toLocaleString('en-IN', { maximumFractionDigits: 2 })}`;
 const dmy = (d?: string) => (d ? d.slice(0, 10).split('-').reverse().join('/') : '—');
+const dmyShort = (d?: string) => (d ? `${d.slice(8, 10)}/${d.slice(5, 7)}/${d.slice(2, 4)}` : '—');
 const today = () => new Date().toISOString().slice(0, 10);
 const monthStart = () => today().slice(0, 8) + '01';
 
@@ -36,9 +37,9 @@ const Sheet: React.FC<{ title: string; onClose: () => void; children: React.Reac
 };
 
 // ── Add / edit supplier ─────────────────────────────────────────────────────
-const SupplierForm: React.FC<{ initial?: Supplier; onSaved: (s: Supplier) => void; onClose: () => void }> = ({ initial, onSaved, onClose }) => {
+const SupplierForm: React.FC<{ initial?: Supplier; kind?: SupplierKind; onSaved: (s: Supplier) => void; onClose: () => void }> = ({ initial, kind: startKind, onSaved, onClose }) => {
   const [f, setF] = useState({
-    name: initial?.name || '', kind: (initial?.kind || 'product') as SupplierKind, phone: initial?.phone || '', address: initial?.address || '',
+    name: initial?.name || '', kind: (initial?.kind || startKind || 'product') as SupplierKind, phone: initial?.phone || '', address: initial?.address || '',
     gst: initial?.gst || '', bank_details: initial?.bank_details || '', notes: initial?.notes || '',
   });
   const [busy, setBusy] = useState(false);
@@ -401,14 +402,30 @@ const ReportSheet: React.FC<{ suppliers: Supplier[]; purchases: Purchase[]; onCl
 };
 
 // ── Page ────────────────────────────────────────────────────────────────────
+const TONE: Record<SupplierKind, { bg: string; fg: string }> = {
+  product: { bg: 'var(--lime)', fg: 'var(--on-lime)' },
+  box: { bg: 'var(--ink)', fg: 'var(--bg)' },
+  cover: { bg: 'var(--card2)', fg: 'var(--ink)' },
+  other: { bg: 'var(--card2)', fg: 'var(--muted)' },
+};
+const initials = (n: string) => n.trim().split(/\s+/).slice(0, 2).map((w) => w[0] || '').join('').toUpperCase() || '?';
+const STARTERS: { kind: SupplierKind; title: string; hint: string }[] = [
+  { kind: 'product', title: 'Product supplier', hint: 'Massagers and other stock' },
+  { kind: 'box', title: 'Packing box seller', hint: 'Boxes and cartons' },
+  { kind: 'cover', title: 'Packing cover seller', hint: 'Covers and bags' },
+  { kind: 'other', title: 'Shop or other', hint: 'Anything else you buy' },
+];
+
 export const SuppliersView: React.FC = () => {
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
   const [purchases, setPurchases] = useState<Purchase[]>([]);
+  const [cartons, setCartons] = useState<SupplierCarton[] | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [search, setSearch] = useState('');
   const [kind, setKind] = useState<SupplierKind | 'all'>('all');
   const [form, setForm] = useState<Supplier | 'new' | null>(null);
+  const [startKind, setStartKind] = useState<SupplierKind | undefined>(undefined);
   const [openId, setOpenId] = useState<string | null>(null);
   const [report, setReport] = useState(false);
   const alive = useRef(true);
@@ -421,6 +438,8 @@ export const SuppliersView: React.FC = () => {
       if (!alive.current) return;
       setSuppliers(s); setPurchases(p); setError('');
     } catch (e) { if (alive.current) setError(friendlyError(e)); } finally { if (alive.current) setLoading(false); }
+    // unsold cartons per supplier: nice to have, never blocks the page (the carton link may not be set up yet)
+    SupplierService.cartons().then((c) => { if (alive.current) setCartons(c); }).catch(() => { if (alive.current) setCartons(null); });
   }, []);
   useEffect(() => { void load(); }, [load]);
 
@@ -429,6 +448,11 @@ export const SuppliersView: React.FC = () => {
     purchases.forEach((p) => m.set(p.supplier_id, [...(m.get(p.supplier_id) || []), p]));
     return m;
   }, [purchases]);
+  const unsold = useMemo(() => {
+    const m = new Map<string, { cartons: number; units: number }>();
+    (cartons || []).forEach((c) => { if (!c.supplier_id || c.inStock <= 0) return; const e = m.get(c.supplier_id) || { cartons: 0, units: 0 }; e.cartons++; e.units += c.inStock; m.set(c.supplier_id, e); });
+    return m;
+  }, [cartons]);
 
   const shown = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -436,73 +460,136 @@ export const SuppliersView: React.FC = () => {
   }, [suppliers, search, kind]);
 
   const all = totalsFor(purchases);
+  const unsoldTotal = [...unsold.values()].reduce((n, e) => n + e.cartons, 0);
   const open = suppliers.find((s) => s.id === openId) || null;
   const count = (k: SupplierKind | 'all') => (k === 'all' ? suppliers.length : suppliers.filter((s) => s.kind === k).length);
+  const add = (k?: SupplierKind) => { setStartKind(k); setForm('new'); };
+
+  // where the money went: the biggest suppliers by spend, as shares of the total
+  const share = useMemo(() => {
+    const rows = suppliers.map((s) => ({ id: s.id, name: s.name, spent: totalsFor(byId.get(s.id) || []).spent })).filter((r) => r.spent > 0).sort((a, b) => b.spent - a.spent);
+    const top = rows.slice(0, 3);
+    const rest = rows.slice(3).reduce((n, r) => n + r.spent, 0);
+    return rest > 0 ? [...top, { id: 'rest', name: 'Others', spent: rest }] : top;
+  }, [suppliers, byId]);
+  const SHADES = ['rgba(4,33,15,.92)', 'rgba(4,33,15,.62)', 'rgba(4,33,15,.38)', 'rgba(4,33,15,.2)'];
+
+  const empty = !loading && suppliers.length === 0 && !error;
 
   return (
-    <div className="kdash min-h-full p-3 sm:p-5 md:p-7 pb-24 md:pb-10">
+    <div className="kdash min-h-full p-3 sm:p-5 md:p-7 pb-28 md:pb-10">
       <div className="max-w-7xl mx-auto space-y-5">
-        <header className="k-rise flex flex-col lg:flex-row lg:items-center justify-between gap-4" style={{ ['--i' as string]: 0 }}>
-          <h2 className="text-3xl sm:text-4xl font-bold leading-none k-display">Suppliers</h2>
-          <div className="flex items-center gap-2 flex-wrap">
-            <div className="relative flex-1 lg:w-72 min-w-[12rem]">
-              <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 k-muted" />
-              <input type="search" value={search} onChange={(e) => setSearch(e.target.value)} aria-label="Search suppliers" placeholder="Search name, phone, GST" className="k-field" style={{ paddingLeft: '2.6rem' }} />
+        <header className="k-rise space-y-3" style={{ ['--i' as string]: 0 }}>
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0">
+              <h2 className="text-[34px] sm:text-5xl font-bold leading-none k-display tracking-tight">Suppliers</h2>
+              <p className="text-sm k-muted mt-2">{suppliers.length ? `${suppliers.length} supplier${suppliers.length === 1 ? '' : 's'} saved` : 'Everyone you buy from, and what you paid.'}</p>
             </div>
-            <button onClick={load} disabled={loading} aria-label="Refresh" className="k-btn k-btn-ghost w-11 h-11 shrink-0"><RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} /></button>
-            <button onClick={() => setReport(true)} className="k-btn k-btn-ghost h-11 px-4"><FileDown className="w-4 h-4" /> Report</button>
-            <button onClick={() => setForm('new')} className="k-btn k-btn-lime h-11 px-5"><Plus className="w-4 h-4" /> Add supplier</button>
+            <div className="flex items-center gap-2 shrink-0">
+              <button onClick={load} disabled={loading} aria-label="Refresh" className="k-btn k-btn-ghost w-11 h-11"><RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} /></button>
+              <button onClick={() => setReport(true)} aria-label="Report" className="k-btn k-btn-ghost h-11 px-3.5 sm:px-4"><FileDown className="w-4 h-4" /> <span className="hidden sm:inline">Report</span></button>
+              <button onClick={() => add()} className="k-btn k-btn-lime h-11 px-4 sm:px-5"><Plus className="w-4 h-4" /> <span><span className="sm:hidden">Add</span><span className="hidden sm:inline">Add supplier</span></span></button>
+            </div>
           </div>
+          {!empty && (
+            <div className="relative">
+              <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 k-muted" aria-hidden="true" />
+              <input type="search" value={search} onChange={(e) => setSearch(e.target.value)} aria-label="Search suppliers" placeholder="Search name, phone, GST" className="k-field !rounded-full !h-12" style={{ paddingLeft: '2.8rem' }} />
+            </div>
+          )}
         </header>
 
         {error && <div role="alert" className="k-card p-4 text-sm k-bad">{error}</div>}
 
-        <div className="grid grid-cols-3 gap-3 sm:gap-4 k-rise" style={{ ['--i' as string]: 1 }}>
-          {[['Suppliers', suppliers.length], ['Cartons bought', all.cartons], ['Money spent', inr(all.spent)]].map(([l, v]) => (
-            <div key={String(l)} className="k-card p-4 sm:p-6"><p className="text-xs sm:text-sm k-muted">{l}</p><p className="text-lg min-[400px]:text-2xl sm:text-4xl font-bold k-display tabular-nums mt-1 sm:mt-2 truncate">{v}</p></div>
-          ))}
-        </div>
-
-        <div className="flex gap-2 overflow-x-auto pb-1 k-rise" style={{ ['--i' as string]: 2, scrollbarWidth: 'none' }}>
-          {(['all', ...KINDS] as const).map((k) => <button key={k} className="k-chip shrink-0" aria-pressed={kind === k} onClick={() => setKind(k)}>{k === 'all' ? 'All' : KIND_LABEL[k]} · {count(k)}</button>)}
-        </div>
-
-        {loading && suppliers.length === 0 ? (
-          <div className="grid sm:grid-cols-2 xl:grid-cols-3 gap-4">{[0, 1, 2].map((i) => <div key={i} className="k-card k-skel h-40" />)}</div>
-        ) : shown.length === 0 ? (
-          <div className="k-card p-8 sm:p-12 text-center">
-            <Store className="w-8 h-8 mx-auto k-muted" />
-            <p className="font-semibold mt-3">{suppliers.length ? 'No supplier matches.' : 'No suppliers yet.'}</p>
-            <p className="text-sm k-muted mt-1">{suppliers.length ? 'Clear the search or pick another type.' : 'Add the people you buy from: product makers, box and cover sellers, shops.'}</p>
-            {!suppliers.length && !error && <button onClick={() => setForm('new')} className="k-btn k-btn-lime h-11 px-6 mt-5"><Plus className="w-4 h-4" /> Add the first supplier</button>}
-          </div>
+        {empty ? (
+          <section className="k-card rounded-[28px] p-6 sm:p-10 text-center k-rise" style={{ ['--i' as string]: 1 }}>
+            <span className="w-20 h-20 rounded-full grid place-items-center mx-auto" style={{ background: 'var(--lime)', color: 'var(--on-lime)' }}><Store className="w-9 h-9" aria-hidden="true" /></span>
+            <h3 className="text-3xl sm:text-4xl font-bold k-display tracking-tight mt-5">Who do you buy from?</h3>
+            <p className="text-sm sm:text-base k-muted mt-2 max-w-md mx-auto">Save each supplier once. Then add what you bought, the price per carton and the bill, and see where your money goes.</p>
+            <div className="grid grid-cols-2 gap-3 mt-7 max-w-xl mx-auto text-left">
+              {STARTERS.map((st) => (
+                <button key={st.kind} type="button" onClick={() => add(st.kind)} className="k-card2 rounded-3xl p-4 min-h-[96px] flex flex-col justify-between hover:opacity-90 active:scale-[.98] transition">
+                  <span className="w-9 h-9 rounded-xl grid place-items-center" style={st.kind === 'cover' || st.kind === 'other' ? { background: 'var(--card)', color: 'var(--ink)' } : { background: TONE[st.kind].bg, color: TONE[st.kind].fg }}><Plus className="w-4 h-4" aria-hidden="true" /></span>
+                  <span><span className="block font-bold text-[15px] leading-tight">{st.title}</span><span className="block text-xs k-muted mt-0.5">{st.hint}</span></span>
+                </button>
+              ))}
+            </div>
+          </section>
         ) : (
-          <ul className="grid sm:grid-cols-2 xl:grid-cols-3 gap-4">
-            {shown.map((s, i) => {
-              const t = totalsFor(byId.get(s.id) || []);
-              const tone = i === 0 && kind === 'all' && !search && t.count > 0;
-              return (
-                <li key={s.id} className="k-rise" style={{ ['--i' as string]: Math.min(i, 8) + 3 }}>
-                  <button onClick={() => setOpenId(s.id)} className={`${tone ? 'rounded-[28px]' : 'k-card'} w-full text-left p-4 sm:p-6 flex flex-col h-full`} style={tone ? { background: 'var(--lime)', color: 'var(--on-lime)' } : undefined}>
-                    <div className="flex items-start justify-between gap-3">
-                      <p className="font-semibold text-lg leading-tight min-w-0 break-words">{s.name}</p>
-                      <span className="text-xs font-semibold rounded-full px-2.5 py-1 shrink-0" style={{ background: 'rgba(128,128,128,.22)' }}>{KIND_LABEL[s.kind]}</span>
+          <>
+            {/* hero: the one big number, and where it went */}
+            <section className="grid gap-3 md:gap-4 md:grid-cols-[minmax(0,1.5fr)_minmax(0,1fr)] k-rise" style={{ ['--i' as string]: 1 }} aria-label="Summary">
+              <div className="rounded-[28px] p-5 sm:p-7 flex flex-col justify-between min-h-[190px]" style={{ background: 'var(--lime)', color: 'var(--on-lime)' }}>
+                <div>
+                  <p className="text-sm font-semibold opacity-80">Money spent on suppliers</p>
+                  <p className="text-5xl sm:text-6xl font-bold k-display tabular-nums leading-none mt-2 tracking-tight">{inr(all.spent)}</p>
+                </div>
+                {share.length > 0 ? (
+                  <div className="mt-6">
+                    <div className="flex h-3 rounded-full overflow-hidden gap-[3px]" role="img" aria-label={`Share of spending: ${share.map((r) => `${r.name} ${Math.round((r.spent / (all.spent || 1)) * 100)} percent`).join(', ')}`}>
+                      {share.map((r, i) => <span key={r.id} style={{ width: `${(r.spent / (all.spent || 1)) * 100}%`, background: SHADES[i], minWidth: 6 }} className="rounded-full" />)}
                     </div>
-                    <p className="text-sm opacity-70 mt-1 truncate">{s.phone || 'No phone saved'}</p>
-                    <div className="grid grid-cols-3 gap-2 mt-5">
-                      {[[s.kind === 'product' ? 'Cartons' : 'Buys', s.kind === 'product' ? t.cartons : t.count], ['Spent', inr(t.spent)], ['Last', dmy(t.last)]].map(([l, v]) => (
-                        <div key={String(l)} className="rounded-2xl px-3 py-2" style={{ background: 'rgba(128,128,128,.16)' }}><p className="text-[11px] opacity-70">{l}</p><p className="font-bold tabular-nums text-sm sm:text-base truncate">{v}</p></div>
-                      ))}
-                    </div>
-                  </button>
-                </li>
-              );
-            })}
-          </ul>
+                    <ul className="mt-3 grid grid-cols-2 gap-x-4 gap-y-1.5 text-[13px]">
+                      {share.map((r, i) => <li key={r.id} className="flex items-center gap-2 min-w-0"><span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ background: SHADES[i] }} aria-hidden="true" /><span className="truncate">{r.name}</span><span className="ml-auto font-semibold tabular-nums">{Math.round((r.spent / (all.spent || 1)) * 100)}%</span></li>)}
+                    </ul>
+                  </div>
+                ) : <p className="text-sm opacity-80 mt-6">Add a purchase to see where the money goes.</p>}
+              </div>
+              <div className="grid grid-cols-3 md:grid-cols-1 gap-3 md:gap-4">
+                {([['Suppliers', suppliers.length, 'saved'], ['Cartons bought', all.cartons, 'all time'], ['Unsold cartons', cartons === null ? '–' : unsoldTotal, cartons === null ? 'link cartons first' : 'still in stock']] as const).map(([l, v, h]) => (
+                  <div key={l} className="k-card rounded-3xl p-3.5 sm:p-5 md:flex md:items-center md:justify-between md:gap-4">
+                    <div><p className="text-xs sm:text-sm k-muted leading-tight">{l}</p><p className="text-[11px] k-muted opacity-70 hidden md:block">{h}</p></div>
+                    <p className="text-2xl sm:text-4xl font-bold k-display tabular-nums mt-1 md:mt-0">{v}</p>
+                  </div>
+                ))}
+              </div>
+            </section>
+
+            <div className="flex gap-2 overflow-x-auto pb-1 k-rise -mx-3 px-3 sm:mx-0 sm:px-0" style={{ ['--i' as string]: 2, scrollbarWidth: 'none' }} role="group" aria-label="Filter by type">
+              {(['all', ...KINDS] as const).map((k) => <button key={k} className="k-chip shrink-0" style={{ minHeight: 44 }} aria-pressed={kind === k} onClick={() => setKind(k)}>{k === 'all' ? 'All' : KIND_LABEL[k]} <span className="opacity-60">· {count(k)}</span></button>)}
+            </div>
+
+            {loading && suppliers.length === 0 ? (
+              <div className="grid sm:grid-cols-2 xl:grid-cols-3 gap-4">{[0, 1, 2].map((i) => <div key={i} className="k-card k-skel h-44" />)}</div>
+            ) : shown.length === 0 ? (
+              <div className="k-card p-8 text-center"><p className="font-semibold">No supplier matches.</p><p className="text-sm k-muted mt-1">Clear the search or pick another type.</p></div>
+            ) : (
+              <ul className="grid sm:grid-cols-2 xl:grid-cols-3 gap-3 sm:gap-4">
+                {shown.map((s, i) => {
+                  const t = totalsFor(byId.get(s.id) || []);
+                  const u = unsold.get(s.id);
+                  const tone = TONE[s.kind];
+                  const stats: [string, string | number][] = s.kind === 'product'
+                    ? [['Cartons', t.cartons], ['Spent', inr(t.spent)], ['Unsold', cartons === null ? '–' : u ? u.cartons : 0]]
+                    : [['Buys', t.count], ['Spent', inr(t.spent)], ['Last', dmyShort(t.last)]];
+                  return (
+                    <li key={s.id} className="k-rise" style={{ ['--i' as string]: Math.min(i, 8) + 3 }}>
+                      <article className="k-card rounded-3xl p-4 sm:p-5 relative h-full flex flex-col gap-4">
+                        <button type="button" onClick={() => setOpenId(s.id)} aria-label={`Open ${s.name}`} className="absolute inset-0 rounded-3xl" />
+                        <div className="flex items-center gap-3 relative pointer-events-none">
+                          <span className="w-12 h-12 rounded-full grid place-items-center font-bold text-[15px] shrink-0" style={{ background: tone.bg, color: tone.fg }} aria-hidden="true">{initials(s.name)}</span>
+                          <div className="min-w-0 flex-1">
+                            <p className="font-bold text-[17px] leading-tight truncate">{s.name}</p>
+                            <p className="text-xs k-muted mt-0.5 truncate">{KIND_LABEL[s.kind]}{s.phone ? ` · ${s.phone}` : ''}</p>
+                          </div>
+                          {s.phone && <a href={`tel:${s.phone}`} onClick={(e) => e.stopPropagation()} aria-label={`Call ${s.name}`} className="k-btn k-btn-soft w-11 h-11 rounded-full shrink-0 pointer-events-auto relative z-10"><PhoneIcon className="w-4 h-4" /></a>}
+                        </div>
+                        <dl className="grid grid-cols-3 gap-2 mt-auto relative pointer-events-none">
+                          {stats.map(([l, v]) => (
+                            <div key={l} className="k-card2 rounded-2xl px-3 py-2.5 min-w-0"><dt className="text-[11px] k-muted">{l}</dt><dd className="font-bold tabular-nums text-[15px] truncate">{v}</dd></div>
+                          ))}
+                        </dl>
+                      </article>
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+          </>
         )}
       </div>
 
-      {form && <SupplierForm initial={form === 'new' ? undefined : form} onClose={() => setForm(null)} onSaved={(s) => { setForm(null); setOpenId(s.id); void load(); }} />}
+      {form && <SupplierForm initial={form === 'new' ? undefined : form} kind={form === 'new' ? startKind : undefined} onClose={() => setForm(null)} onSaved={(s) => { setForm(null); setOpenId(s.id); void load(); }} />}
       {open && !form && <SupplierDetail supplier={open} names={new Map(suppliers.map((x) => [x.id, x.name]))} purchases={byId.get(open.id) || []} onChanged={load} onEdit={() => setForm(open)} onDeleted={() => { setOpenId(null); void load(); }} onClose={() => setOpenId(null)} />}
       {report && <ReportSheet suppliers={suppliers} purchases={purchases} onClose={() => setReport(false)} />}
     </div>

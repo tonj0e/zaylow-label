@@ -100,7 +100,8 @@ async function collect(db: any) {
   const problems = {
     shipped_without_tracking_number: problem(orders.filter((o) => o.status === 'Shipped' && !String(o.tracking_id || '').trim())),
     pincode_not_6_digits: problem(live.filter((o) => digits(o.pincode).length !== 6)),
-    phone_not_10_digits: problem(live.filter((o) => { const d = digits(o.mobile); return d.length !== 10 && !(d.length === 12 && d.startsWith('91')); })),
+    // customers often give TWO or THREE numbers (a backup, a parent or a friend), so 20 or 30 digits is normal; only a broken number counts
+    phone_broken_not_10_20_or_30_digits: problem(live.filter((o) => { const d = digits(o.mobile); return ![10, 20, 30].includes(d.length) && !(d.length === 12 && d.startsWith('91')); })),
     cod_orders_with_zero_amount: problem(live.filter((o) => o.payment_type === 'COD' && num(o.cod_amount) <= 0)),
     waiting_to_print_over_2_days: problem(live.filter((o) => ['Pending', 'Processing', 'Label Generated'].includes(o.status) && (ageDays(o.updated_at) ?? 0) > 2)),
     printed_but_not_shipped_over_2_days: problem(live.filter((o) => o.status === 'Printed' && (ageDays(o.updated_at) ?? 0) > 2)),
