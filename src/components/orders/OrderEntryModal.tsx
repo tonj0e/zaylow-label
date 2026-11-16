@@ -107,7 +107,7 @@ export const OrderEntryModal: React.FC<OrderEntryModalProps> = ({ isOpen, onClos
       }
       setDistrictHints(hints);
     }
-    const got: [string, string][] = [['Name', r.name], ['Phone', r.phone && r.phone.length === 10 ? r.phone : ''], ['Address', r.addressLine], ['PIN code', r.pinCode.length === 6 ? r.pinCode : ''], ['State', r.state]];
+    const got: [string, string][] = [['Name', r.name], ['Phone', r.phone && r.phone.split(',').every((n) => n.trim().length === 10) ? r.phone : ''], ['Address', r.addressLine], ['PIN code', r.pinCode.length === 6 ? r.pinCode : ''], ['State', r.state]];
     setPasteNote({ ok: got.filter(([, v]) => v).map(([k]) => k), check: [...got.filter(([, v]) => !v).map(([k]) => k), ...(r.district ? [] : ['District (choose it)'])] });
   };
   const [saveError, setSaveError] = useState('');
@@ -173,8 +173,12 @@ export const OrderEntryModal: React.FC<OrderEntryModalProps> = ({ isOpen, onClos
   const validate = () => {
     const e: Record<string, string> = {};
     if (!customerName.trim()) e.customerName = 'Enter the customer name.';
+    // one number, or two or three numbers (a backup number) separated by a comma, slash, "and" or a space
     const ph = digits(phone);
-    if (ph.length < 10 || ph.length > 12) e.phone = 'Enter a 10 digit phone number.';
+    const parts = phone.split(/[,/;&|\n]|\band\b|\bor\b/i).map(digits).filter(Boolean);
+    const oneOk = (n: string) => n.length >= 10 && n.length <= 12;
+    const spacedOk = ph.length >= 20 && ph.length <= 36;
+    if (!(parts.length > 1 ? parts.every(oneOk) : oneOk(ph) || spacedOk)) e.phone = 'Enter a 10 digit phone number. For two numbers, put a comma between them.';
     if (!addressLine.trim()) e.addressLine = 'Enter the delivery address.';
     if (!city.trim()) e.city = 'Enter the city.';
     if (!/^\d{6}$/.test(pinCode.trim())) e.pinCode = 'A PIN code has 6 digits.';

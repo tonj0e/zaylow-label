@@ -77,10 +77,10 @@ export const parseAddress = (raw: string): ParsedAddress => {
   // landline lines ("Tel 0471 2345678") are not wanted
   text = text.replace(/^[^\n]*\b(?:tel|telephone|landline|std)\b[ \t:.-]*\d[\d \t-]*$/gim, '\n');
   // phone: a 10-digit Indian mobile number (starts with 6 to 9), written with or without spaces, dashes or +91
-  // when two numbers are given (for example "8921587213,9074789313") the first one is used and the others are removed from the address
+  // when two numbers are given (for example "8921587213,9074789313") both are kept (first = main number, second = backup, up to 3) and removed from the address
   const phRe = /(?<!\d)(?:(?:\+|00)?\s?91[\s.-]?)?([6-9](?:[\s.-]?\d){9})(?!\d)/g;
   const phones = [...text.matchAll(phRe)];
-  if (phones.length) { out.phone = phones[0][1].replace(/\D/g, ''); text = text.replace(phRe, '\n')
+  if (phones.length) { out.phone = [...new Set(phones.map((m) => m[1].replace(/\D/g, '')))].slice(0, 3).join(', '); text = text.replace(phRe, '\n')
     // what is left of the number lines: separators like "," or "/", and a bare "Mobile Number:" label
     .replace(/^[\s,/;&|:-]+$/gm, '')
     .replace(/^\s*(?:phone|mobile|mob|contact|whats\s*app|number|ph|cell)(?:\s*(?:no|number))?[\s:.\-=,/]*$/gim, ''); }

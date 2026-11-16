@@ -1,0 +1,18 @@
+-- CHANGE OLD "Delhivery" ORDERS TO "India Post" (owner's decision, 16 Nov 2026)
+-- The shop ships only with India Post and DTDC. Old orders still say Delhivery, so the
+-- India Post booking import could not match them. This changes ONLY the courier name.
+-- Run in Supabase > SQL Editor. Run PART 1 first, check the number, then PART 2.
+
+-- PART 1: PREVIEW (changes nothing)
+select courier, count(*) as orders from public.orders group by courier order by orders desc;
+
+-- PART 2: CHANGE (a backup of the old courier is kept, so it can be undone)
+create table if not exists public.backup_courier_delhivery as
+  select inventory_id, courier from public.orders where courier = 'Delhivery';
+alter table public.backup_courier_delhivery enable row level security;
+
+update public.orders set courier = 'India Post', updated_at = now() where courier = 'Delhivery';
+
+-- UNDO (only if needed):
+-- update public.orders o set courier = b.courier
+--   from public.backup_courier_delhivery b where o.inventory_id = b.inventory_id;
