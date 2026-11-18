@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import * as maplibregl from 'maplibre-gl';
 import 'maplibre-gl/dist/maplibre-gl.css';
-import workerUrl from 'maplibre-gl/dist/maplibre-gl-worker.mjs?url';
+import workerSource from 'maplibre-gl/dist/maplibre-gl-worker.mjs?raw';
 import type { Feature, FeatureCollection, Geometry } from 'geojson';
 import { Box, Maximize, MapPin, Mountain, Move3d, Pause, Play, RotateCcw, Rotate3d, Sparkles, Truck, Undo2, ZoomIn, ZoomOut } from 'lucide-react';
 import indiaStates from '../../data/indiaStates.json';
@@ -13,7 +13,8 @@ type LL = [number, number]; // longitude, latitude
 type Period = '7' | '30' | '90' | 'all';
 type Pins = Record<string, [number, number]>; // pin -> [latitude, longitude]
 type Kind = 'prep' | 'ship' | 'ret';
-maplibregl.setWorkerUrl(workerUrl); // the map's helper thread, bundled with the site
+// the map's helper thread, bundled inside the site and started from memory, so web hosts that serve .mjs files with the wrong type cannot break the map
+maplibregl.setWorkerUrl(URL.createObjectURL(new Blob([workerSource], { type: 'text/javascript' })));
 type Ex = maplibregl.ExpressionSpecification;
 const ex = (x: unknown) => x as Ex;
 
