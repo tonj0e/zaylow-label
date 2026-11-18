@@ -58,7 +58,7 @@ export const SupplierService = {
     if (error) throw error;
   },
   async uploadBill(file: File): Promise<{ path: string; name: string }> {
-    const clean = file.name.replace(/[^\w.\-]+/g, '_').slice(-80);
+    const clean = file.name.replace(/[^\w.-]+/g, '_').slice(-80);
     const path = `${new Date().getFullYear()}/${Date.now()}_${clean}`;
     const { error } = await db.storage.from(BUCKET).upload(path, file, { contentType: file.type || undefined });
     if (error) throw error;

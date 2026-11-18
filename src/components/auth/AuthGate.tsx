@@ -4,12 +4,13 @@ import { Eye, EyeOff, Loader2, Lock, User } from 'lucide-react';
 import { supabase } from '../../services/supabase';
 import { AuthService } from '../../services/authService';
 import { InstallApp } from './InstallApp';
-import { Splash } from './Splash';
+import { Splash, splashSeen } from './Splash';
 
 /** Nothing in the app is shown until someone has signed in. */
 export const AuthGate: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [session, setSession] = useState<Session | null>(null);
   const [checking, setChecking] = useState(true);
+  const [opened, setOpened] = useState(splashSeen); // the app itself starts when the opening animation is over
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [show, setShow] = useState(false);
@@ -32,11 +33,11 @@ export const AuthGate: React.FC<{ children: React.ReactNode }> = ({ children }) 
     setBusy(false);
   };
 
-  if (session) return <><Splash />{children}</>;
+  if (session) return <><Splash onDone={() => setOpened(true)} />{opened ? children : null}</>;
 
   return (
     <>
-    <Splash />
+    <Splash onDone={() => setOpened(true)} />
     <div className="kdash min-h-screen grid place-items-center p-4" style={{ background: 'var(--bg, #f0f2ee)' }}>
       {checking ? (
         <Loader2 className="w-6 h-6 animate-spin" aria-label="Checking your sign-in" />

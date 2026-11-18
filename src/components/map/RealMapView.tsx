@@ -188,7 +188,7 @@ export const RealMapView: React.FC<MapViewProps> = ({ orders, onRefresh }) => {
   const [flat, setFlat] = useState(false);
   const flatRef = useRef(false);
   flatRef.current = flat;
-  const [relief, setRelief] = useState(!TOUCH);
+  const [relief, setRelief] = useState(false); // switched on only after a test tile of the hill heights loads
   const [orbit, setOrbit] = useState(false); // drag turns the map instead of moving it
   const [spin, setSpin] = useState(false);
   const [tip, setTip] = useState<Tip | null>(null);
@@ -323,8 +323,8 @@ export const RealMapView: React.FC<MapViewProps> = ({ orders, onRefresh }) => {
       const firstSymbol = layers.find((l) => l.type === 'symbol' && /country|ocean|sea|water_name/i.test(l.id))?.id;
       // real terrain and light hill shading
       map.addSource('dem', { type: 'raster-dem', tiles: [DEM], tileSize: 256, encoding: 'terrarium', maxzoom: 11, attribution: 'Terrain: Mapzen, AWS' });
-      if (!TOUCH) map.setTerrain({ source: 'dem', exaggeration: 1.5 });
-      map.addLayer({ id: 'hills', type: 'hillshade', source: 'dem', paint: { 'hillshade-exaggeration': 0.55, 'hillshade-shadow-color': '#07140d', 'hillshade-highlight-color': '#cfe3bd', 'hillshade-accent-color': '#17301f' } }, map.getLayer('water') ? 'water' : firstSymbol);
+      map.addSource('dem-shade', { type: 'raster-dem', tiles: [DEM], tileSize: 256, encoding: 'terrarium', maxzoom: 11 }); // its own source: sharing one with the 3D terrain is not advised
+      map.addLayer({ id: 'hills', type: 'hillshade', source: 'dem-shade', paint: { 'hillshade-exaggeration': 0.55, 'hillshade-shadow-color': '#07140d', 'hillshade-highlight-color': '#cfe3bd', 'hillshade-accent-color': '#17301f' } }, map.getLayer('water') ? 'water' : firstSymbol);
 
       // states and districts
       const rawStates = (indiaStates as unknown as FeatureCollection).features;
@@ -500,6 +500,17 @@ export const RealMapView: React.FC<MapViewProps> = ({ orders, onRefresh }) => {
     map.fitBounds(INDIA_BOUNDS, { padding: 12, duration: 1300, pitch: flatRef.current ? 0 : PITCH_3D, bearing: 0 });
   }, [ready, focusNorm, district, dists, stateByNorm, fitTo]);
 
+  // turn the hills on (computers only) only when the hill-height tiles really load here; a blocked request would leave the whole map empty
+  useEffect(() => {
+    if (!ready || TOUCH) return;
+    const ctl = new AbortController();
+    const timer = setTimeout(() => ctl.abort(), 4000);
+    fetch(DEM.replace('{z}', '4').replace('{x}', '11').replace('{y}', '7'), { signal: ctl.signal })
+      .then((r) => { if (r.ok) setRelief(true); })
+      .catch(() => { /* flat map */ })
+      .finally(() => clearTimeout(timer));
+    return () => { clearTimeout(timer); ctl.abort(); };
+  }, [ready]);
   // flat or 3D, and the terrain relief
   useEffect(() => {
     const map = mapRef.current;
@@ -718,7 +729,7 @@ export const RealMapView: React.FC<MapViewProps> = ({ orders, onRefresh }) => {
       <header className="flex items-end justify-between gap-4 flex-wrap">
         <div>
           <h2 className="text-2xl font-bold k-display">Shipping map</h2>
-          <p className="text-sm k-muted mt-1">Every order, from your hub to its pin code. Tap a state to open it up, then a district.</p>
+          <p className="text-sm k-muted mt-1">Every order, from your hub to its pin code. Tap a state to open it up, then a district. <span className="opacity-60">Version {__BUILD_STAMP__}</span></p>
         </div>
         <div className="flex gap-2 overflow-x-auto max-md:snap-row max-md:-mx-4 max-md:px-4 max-md:w-[calc(100%+2rem)] [&>button]:whitespace-nowrap [&>button]:shrink-0" role="group" aria-label="Period">
           {([['7', 'Last 7 days'], ['30', 'Last 30 days'], ['90', 'Last 90 days'], ['all', 'All time']] as const).map(([k, l]) => <button key={k} className="k-chip" aria-pressed={period === k} onClick={() => setPeriod(k)}>{l}</button>)}
