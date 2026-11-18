@@ -4,9 +4,7 @@ import { Eye, EyeOff, Loader2, Lock, User } from 'lucide-react';
 import { supabase } from '../../services/supabase';
 import { AuthService } from '../../services/authService';
 import { InstallApp } from './InstallApp';
-
-// the logo intro plays once per page load
-let introPlayed = false;
+import { Splash } from './Splash';
 
 /** Nothing in the app is shown until someone has signed in. */
 export const AuthGate: React.FC<{ children: React.ReactNode }> = ({ children }) => {
@@ -17,7 +15,6 @@ export const AuthGate: React.FC<{ children: React.ReactNode }> = ({ children }) 
   const [show, setShow] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
-  const [intro, setIntro] = useState(() => !introPlayed);
 
   useEffect(() => {
     let alive = true;
@@ -25,12 +22,6 @@ export const AuthGate: React.FC<{ children: React.ReactNode }> = ({ children }) 
     const { data } = supabase.auth.onAuthStateChange((_e, s) => { setSession(s); setChecking(false); });
     return () => { alive = false; data.subscription.unsubscribe(); };
   }, []);
-
-  useEffect(() => {
-    if (checking || !intro) return;
-    const t = setTimeout(() => { introPlayed = true; setIntro(false); }, 1900);
-    return () => clearTimeout(t);
-  }, [checking, intro]);
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -41,20 +32,19 @@ export const AuthGate: React.FC<{ children: React.ReactNode }> = ({ children }) 
     setBusy(false);
   };
 
-  if (session) return <>{children}</>;
+  if (session) return <><Splash />{children}</>;
 
   return (
+    <>
+    <Splash />
     <div className="kdash min-h-screen grid place-items-center p-4" style={{ background: 'var(--bg, #f0f2ee)' }}>
       {checking ? (
         <Loader2 className="w-6 h-6 animate-spin" aria-label="Checking your sign-in" />
       ) : (
         <>
-        {intro && (
-          <div className="zl-splash" aria-hidden="true"><img src="/zaylow-logo.png" alt="" className="zl-logo dark:invert" /></div>
-        )}
-        <main className={`k-card w-full max-w-sm p-6 md:p-8 space-y-6 ${intro ? 'zl-card' : 'k-rise'}`}>
+        <main className="k-card w-full max-w-sm p-6 md:p-8 space-y-6 k-rise">
           <div className="flex items-center gap-3">
-            <img src="/zaylow-logo.png" alt="" className="w-10 h-10 object-contain dark:invert zl-mark" />
+            <img src="/zaylow-logo.png" alt="" className="w-10 h-10 object-contain dark:invert" />
             <div><h1 className="text-2xl font-bold k-display leading-none">ZAYLOW</h1><p className="text-sm k-muted mt-1">Warehouse sign in</p></div>
           </div>
 
@@ -82,19 +72,7 @@ export const AuthGate: React.FC<{ children: React.ReactNode }> = ({ children }) 
         </main>
         </>
       )}
-      <style>{`
-        .zl-splash{position:fixed;inset:0;z-index:60;display:grid;place-items:center;background:var(--bg,#f0f2ee);animation:zl-splash-out .5s ease 1.35s forwards}
-        .zl-logo{width:112px;height:112px;object-fit:contain;animation:zl-pop .8s cubic-bezier(.22,1,.36,1) both, zl-away .5s cubic-bezier(.5,0,.75,0) 1.35s forwards}
-        .zl-card{animation:zl-card .6s cubic-bezier(.22,1,.36,1) 1.45s both}
-        .zl-mark{animation:zl-spin .9s cubic-bezier(.22,1,.36,1) 1.6s both}
-        @keyframes zl-pop{from{opacity:0;transform:scale(.55) rotate(-120deg)}to{opacity:1;transform:scale(1) rotate(0)}}
-        @keyframes zl-away{to{transform:scale(.35) translateY(-160px);opacity:0}}
-        @keyframes zl-splash-out{to{opacity:0;visibility:hidden}}
-        @keyframes zl-card{from{opacity:0;transform:translateY(28px) scale(.97)}to{opacity:1;transform:none}}
-        @keyframes zl-spin{from{transform:rotate(-180deg) scale(.6)}to{transform:none}}
-        @keyframes zl-fade{from{opacity:0}to{opacity:1}}
-        @media (prefers-reduced-motion: reduce){.zl-logo{animation:zl-fade .6s ease both,zl-away .01s linear 1.35s forwards}.zl-card{animation:zl-fade .5s ease 1.45s both}.zl-mark{animation:none}}
-      `}</style>
     </div>
+    </>
   );
 };

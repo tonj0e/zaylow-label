@@ -1,5 +1,6 @@
 import { useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
-import { Search, RefreshCw, Package, Layers, MapPin, ArrowRight, Box } from 'lucide-react';
+import { Search, RefreshCw, Package, Layers, MapPin, ArrowRight, Box, QrCode } from 'lucide-react';
+import { StockQrSheet } from './StockQrSheet';
 import { DataService } from '../../services/dataService';
 import { useCached } from '../../hooks/useCached';
 
@@ -22,6 +23,7 @@ export const InventoryCatalog: React.FC<{ initialTab: Tab; autoFocusSearch?: boo
   const [pf, setPf] = useState<PFilter>('all');
   const [cf, setCf] = useState<CFilter>('all');
   const [sort, setSort] = useState<'new' | 'units'>('new');
+  const [qrFor, setQrFor] = useState<string | null>(null);
   const q = useDeferredValue(search.trim().toLowerCase());
   const searchRef = useRef<HTMLInputElement>(null);
 
@@ -176,7 +178,10 @@ export const InventoryCatalog: React.FC<{ initialTab: Tab; autoFocusSearch?: boo
                         <div key={l} className="rounded-2xl px-3 py-2" style={{ background: 'rgba(128,128,128,.16)' }}><dt className="text-[11px] opacity-65">{l}</dt><dd className="font-bold tabular-nums">{v}</dd></div>
                       ))}
                     </dl>
-                    <button onClick={() => seeCartons(s.product_name)} className="mt-5 text-sm font-semibold flex items-center gap-1.5 hover:gap-2.5 transition-all self-start">See its cartons <ArrowRight className="w-4 h-4" /></button>
+                    <div className="mt-5 flex flex-wrap items-center gap-x-5 gap-y-2">
+                      <button onClick={() => seeCartons(s.product_name)} className="text-sm font-semibold flex items-center gap-1.5 hover:gap-2.5 transition-all">See its cartons <ArrowRight className="w-4 h-4" /></button>
+                      {(s.available || 0) > 0 && <button onClick={() => setQrFor(s.product_name)} className="text-sm font-semibold flex items-center gap-1.5"><QrCode className="w-4 h-4" /> Stock QR codes</button>}
+                    </div>
                   </li>
                 );
               })}
@@ -226,6 +231,7 @@ export const InventoryCatalog: React.FC<{ initialTab: Tab; autoFocusSearch?: boo
           )
         )}
       </div>
+      {qrFor && <StockQrSheet productName={qrFor} onClose={() => setQrFor(null)} />}
     </div>
   );
 };

@@ -22,6 +22,8 @@ export const ThermalLabel: React.FC<ThermalLabelProps> = ({
   innerRef,
   className = ''
 }) => {
+  // the day this label is printed (today), written day/month/year
+  const printedOn = new Date().toLocaleDateString('en-GB');
   const isCod = order.paymentType === 'COD';
 
   // Compute pixel dimensions from mm
@@ -138,8 +140,7 @@ export const ThermalLabel: React.FC<ThermalLabelProps> = ({
               <p>QUANTITY: {order.item.quantity}</p>
               <p>PRICE: ₹{order.codAmount}</p>
               <p>ORDER ID: #{order.id.replace('ZYL-', '')}</p>
-              {order.productId && <p>PRODUCT ID: {order.productId}</p>}
-              {order.cartonId && <p>CARTON ID: {order.cartonId}</p>}
+              <p>PRINTED: {printedOn}</p>
             </div>
           </div>
 
@@ -241,8 +242,7 @@ export const ThermalLabel: React.FC<ThermalLabelProps> = ({
             <p>QUANTITY: {order.item.quantity}</p>
             {(order.codAmount > 0 || (order.advancePaid ?? 0) > 0) && <p>PRICE: ₹{order.codAmount > 0 ? order.codAmount : order.advancePaid}</p>}
             <p>ORDER ID: #{order.id.replace('ZYL-', '')}</p>
-            {order.productId && <p>PRODUCT ID: {order.productId}</p>}
-            {order.cartonId && <p>CARTON ID: {order.cartonId}</p>}
+            <p>PRINTED: {printedOn}</p>
           </div>
         </div>
 

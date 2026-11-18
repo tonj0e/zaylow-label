@@ -40,7 +40,10 @@ const kindOf = (s: Order['status']): Kind | null => {
   if (s === 'Cancelled') return null;
   return 'prep';
 };
-const KCOLOR: Record<Kind, string> = { ship: '#084c99', prep: '#b45309', ret: '#b91c1c' };
+// Apple Maps night look: bright system colours that stay clear on the deep blue sea and green land
+const KCOLOR: Record<Kind, string> = { ship: '#5ac8fa', prep: '#ffd60a', ret: '#ff6b57' };
+const SEA = '#0b2150';
+const LAND = '#335f47';
 
 const normState = (n: string) => {
   const x = (n || '').toLowerCase().replace(/\(ut\)/g, '').replace(/&/g, 'and').replace(/[^a-z ]/g, '').replace(/\s+/g, ' ').trim();
@@ -293,55 +296,69 @@ export const RealMapView: React.FC<MapViewProps> = ({ orders, onRefresh }) => {
     const setup = () => { if (started) return; started = true; try {
       const layers = map.getStyle().layers || [];
       // a calm base: sea colour behind everything, only English names of countries and seas, no shops, roads or foreign-language towns
-      if (map.getLayer('background')) map.setPaintProperty('background', 'background-color', '#a9d0ea');
+      if (map.getLayer('background')) map.setPaintProperty('background', 'background-color', LAND);
       if (map.getLayer('natural_earth')) map.setLayoutProperty('natural_earth', 'visibility', 'none');
-      if (map.getLayer('water')) map.setPaintProperty('water', 'fill-color', '#a9d0ea');
+      if (map.getLayer('water')) map.setPaintProperty('water', 'fill-color', SEA);
       layers.forEach((l) => {
+        if (l.type === 'fill' || l.type === 'fill-extrusion') {
+          if (/landcover|landuse|park|building|aeroway|aboriginal/i.test(l.id)) map.setLayoutProperty(l.id, 'visibility', 'none');
+        } else if (l.type === 'line') {
+          if (/casing/i.test(l.id)) map.setLayoutProperty(l.id, 'visibility', 'none');
+          else if (/waterway/i.test(l.id)) map.setPaintProperty(l.id, 'line-color', '#2f66bd');
+          else if (/road|bridge|tunnel|rail|ferry|transit/i.test(l.id)) { map.setPaintProperty(l.id, 'line-color', '#a9bee2'); map.setPaintProperty(l.id, 'line-opacity', 0.5); }
+          else if (/boundary/i.test(l.id)) { map.setPaintProperty(l.id, 'line-color', '#d3def8'); map.setPaintProperty(l.id, 'line-opacity', 0.4); }
+        }
         if (l.type !== 'symbol') return;
-        if (/country|ocean|sea|water_name/i.test(l.id)) { map.setLayoutProperty(l.id, 'text-field', ex(['coalesce', ['get', 'name:latin'], ['get', 'name_en'], ['get', 'name']])); }
-        else map.setLayoutProperty(l.id, 'visibility', 'none');
+        if (/country|ocean|sea|water_name/i.test(l.id)) {
+          const wet = /ocean|sea|water_name/i.test(l.id);
+          map.setLayoutProperty(l.id, 'text-field', ex(['coalesce', ['get', 'name:latin'], ['get', 'name_en'], ['get', 'name']]));
+          map.setLayoutProperty(l.id, 'text-letter-spacing', wet ? 0.22 : 0.3);
+          map.setPaintProperty(l.id, 'text-color', wet ? '#86adf0' : '#eef3ff');
+          map.setPaintProperty(l.id, 'text-halo-color', 'rgba(6,16,40,.85)');
+          map.setPaintProperty(l.id, 'text-halo-width', 1.4);
+        } else map.setLayoutProperty(l.id, 'visibility', 'none');
       });
       const firstSymbol = layers.find((l) => l.type === 'symbol' && /country|ocean|sea|water_name/i.test(l.id))?.id;
       // real terrain and light hill shading
       map.addSource('dem', { type: 'raster-dem', tiles: [DEM], tileSize: 256, encoding: 'terrarium', maxzoom: 11, attribution: 'Terrain: Mapzen, AWS' });
       if (!TOUCH) map.setTerrain({ source: 'dem', exaggeration: 1.5 });
-      map.addLayer({ id: 'hills', type: 'hillshade', source: 'dem', paint: { 'hillshade-exaggeration': 0.28, 'hillshade-shadow-color': '#4a3b25', 'hillshade-highlight-color': '#ffffff', 'hillshade-accent-color': '#6b5a3c' } }, map.getLayer('water') ? 'water' : firstSymbol);
+      map.addLayer({ id: 'hills', type: 'hillshade', source: 'dem', paint: { 'hillshade-exaggeration': 0.55, 'hillshade-shadow-color': '#07140d', 'hillshade-highlight-color': '#cfe3bd', 'hillshade-accent-color': '#17301f' } }, map.getLayer('water') ? 'water' : firstSymbol);
 
       // states and districts
       const rawStates = (indiaStates as unknown as FeatureCollection).features;
       const stateFC: FeatureCollection = { type: 'FeatureCollection', features: states.map((s, i) => ({ type: 'Feature', properties: { norm: s.norm, name: s.name, fill: mix(PALETTE[s.ci], 0), dim: mix(PALETTE[s.ci], 0.45, GREY) }, geometry: rawStates[i].geometry })) };
       map.addSource('states', { type: 'geojson', data: stateFC, promoteId: 'norm' });
       map.addSource('districts', { type: 'geojson', data: empty(), promoteId: 'key' });
-      map.addLayer({ id: 'states-fill', type: 'fill', source: 'states', paint: { 'fill-color': ex(['case', ['boolean', ['feature-state', 'dim'], false], ['get', 'dim'], ['get', 'fill']]), 'fill-opacity': ex(['interpolate', ['linear'], ['zoom'], 4, 0.52, 8, 0.4]) } }, firstSymbol);
-      map.addLayer({ id: 'districts-fill', type: 'fill', source: 'districts', paint: { 'fill-color': ex(['case', ['boolean', ['feature-state', 'dim'], false], ['get', 'dim'], ['get', 'fill']]), 'fill-opacity': ex(['interpolate', ['linear'], ['zoom'], 4, 0.002, 5.5, 0.18, 7.5, 0.3]) } }, firstSymbol);
+      map.addLayer({ id: 'states-fill', type: 'fill', source: 'states', paint: { 'fill-color': ex(['case', ['boolean', ['feature-state', 'dim'], false], ['get', 'dim'], ['get', 'fill']]), 'fill-opacity': ex(['interpolate', ['linear'], ['zoom'], 4, 0.2, 8, 0.15]) } }, firstSymbol);
+      map.addLayer({ id: 'districts-fill', type: 'fill', source: 'districts', paint: { 'fill-color': ex(['case', ['boolean', ['feature-state', 'dim'], false], ['get', 'dim'], ['get', 'fill']]), 'fill-opacity': ex(['interpolate', ['linear'], ['zoom'], 4, 0.002, 5.5, 0.12, 7.5, 0.2]) } }, firstSymbol);
       map.addLayer({ id: 'states-hover', type: 'fill', source: 'states', paint: { 'fill-color': '#ffffff', 'fill-opacity': ex(['case', ['boolean', ['feature-state', 'hover'], false], 0.3, 0]) } }, firstSymbol);
       map.addLayer({ id: 'districts-hover', type: 'fill', source: 'districts', paint: { 'fill-color': '#ffffff', 'fill-opacity': ex(['case', ['boolean', ['feature-state', 'sel'], false], 0.42, ['boolean', ['feature-state', 'hover'], false], 0.28, 0]) } }, firstSymbol);
       map.addLayer({ id: 'districts-line', type: 'line', source: 'districts', layout: { 'line-join': 'round' }, paint: {
-        'line-color': ex(['case', ['>', ['coalesce', ['feature-state', 'n'], 0], 0], '#0d6e64', '#5f4824']),
+        'line-color': ex(['case', ['>', ['coalesce', ['feature-state', 'n'], 0], 0], '#5ac8fa', 'rgba(236,243,255,0.35)']),
         'line-width': ex(['interpolate', ['linear'], ['zoom'], 4, ['case', ['>', ['coalesce', ['feature-state', 'n'], 0], 0], 1.1, 0.5], 8, ['case', ['boolean', ['feature-state', 'sel'], false], 3.2, ['>', ['coalesce', ['feature-state', 'n'], 0], 0], 2, 1.2]]),
         'line-opacity': ex(['interpolate', ['linear'], ['zoom'], 4, 0.4, 8, 0.8]),
       } }, firstSymbol);
-      map.addLayer({ id: 'states-casing', type: 'line', source: 'states', layout: { 'line-join': 'round' }, paint: { 'line-color': '#ffffff', 'line-width': ex(['interpolate', ['linear'], ['zoom'], 4, 3, 8, 5]), 'line-opacity': 0.7 } }, firstSymbol);
-      map.addLayer({ id: 'states-line', type: 'line', source: 'states', layout: { 'line-join': 'round' }, paint: { 'line-color': '#3d2a0e', 'line-width': ex(['interpolate', ['linear'], ['zoom'], 4, 1.2, 8, 2]), 'line-opacity': 0.85 } }, firstSymbol);
+      map.addLayer({ id: 'states-casing', type: 'line', source: 'states', layout: { 'line-join': 'round' }, paint: { 'line-color': SEA, 'line-width': ex(['interpolate', ['linear'], ['zoom'], 4, 3, 8, 5]), 'line-opacity': 0.35 } }, firstSymbol);
+      map.addLayer({ id: 'states-line', type: 'line', source: 'states', layout: { 'line-join': 'round' }, paint: { 'line-color': '#e3ebff', 'line-width': ex(['interpolate', ['linear'], ['zoom'], 4, 1, 8, 1.6]), 'line-opacity': 0.55, 'line-dasharray': [3, 2] } }, firstSymbol);
 
       // names and counts
       const stateLabels: FeatureCollection = { type: 'FeatureCollection', features: states.map((s) => point(s.geo.center, { name: s.name.replace(/ and /g, ' & ').toUpperCase(), norm: s.norm, area: s.geo.area })) };
       map.addSource('state-labels', { type: 'geojson', data: stateLabels });
-      map.addLayer({ id: 'state-names', type: 'symbol', source: 'state-labels', maxzoom: 7.2, layout: { 'text-field': ['get', 'name'], 'text-font': ['Noto Sans Bold'], 'text-size': ex(['interpolate', ['linear'], ['zoom'], 3.5, 9, 6, 13]), 'text-letter-spacing': 0.08, 'text-max-width': 7, 'symbol-sort-key': ex(['-', ['get', 'area']]) }, paint: { 'text-color': '#2e2008', 'text-halo-color': 'rgba(255,255,255,0.92)', 'text-halo-width': 1.8 } });
+      map.addLayer({ id: 'state-names', type: 'symbol', source: 'state-labels', maxzoom: 7.2, layout: { 'text-field': ['get', 'name'], 'text-font': ['Noto Sans Bold'], 'text-size': ex(['interpolate', ['linear'], ['zoom'], 3.5, 9, 6, 13]), 'text-letter-spacing': 0.28, 'text-max-width': 7, 'symbol-sort-key': ex(['-', ['get', 'area']]) }, paint: { 'text-color': 'rgba(238,244,255,0.92)', 'text-halo-color': 'rgba(6,16,40,0.8)', 'text-halo-width': 1.6 } });
       map.addSource('badges', { type: 'geojson', data: empty() });
-      map.addLayer({ id: 'badges-dot', type: 'circle', source: 'badges', maxzoom: 7.2, paint: { 'circle-radius': 12, 'circle-color': '#062418', 'circle-stroke-color': '#fff', 'circle-stroke-width': 1.6, 'circle-translate': [0, 20] } });
+      map.addLayer({ id: 'badges-dot', type: 'circle', source: 'badges', maxzoom: 7.2, paint: { 'circle-radius': 12, 'circle-color': '#0a84ff', 'circle-stroke-color': '#fff', 'circle-stroke-width': 1.6, 'circle-translate': [0, 20] } });
       map.addLayer({ id: 'badges-text', type: 'symbol', source: 'badges', maxzoom: 7.2, layout: { 'text-field': ['to-string', ['get', 'n']], 'text-font': ['Noto Sans Bold'], 'text-size': 11, 'text-allow-overlap': true }, paint: { 'text-color': '#fff', 'text-translate': [0, 20] } });
       map.addSource('district-labels', { type: 'geojson', data: empty() });
-      map.addLayer({ id: 'district-names', type: 'symbol', source: 'district-labels', minzoom: 5.6, layout: { 'text-field': ex(['case', ['>', ['get', 'n'], 0], ['concat', ['get', 'name'], '\n', ['to-string', ['get', 'n']]], ['get', 'name']]), 'text-font': ['Noto Sans Bold'], 'text-size': ex(['interpolate', ['linear'], ['zoom'], 5.6, 10, 9, 13]), 'text-max-width': 7, 'symbol-sort-key': ex(['-', ['get', 'n']]) }, paint: { 'text-color': '#2e2008', 'text-halo-color': 'rgba(255,255,255,0.92)', 'text-halo-width': 1.6 } });
+      map.addLayer({ id: 'district-names', type: 'symbol', source: 'district-labels', minzoom: 5.6, layout: { 'text-field': ex(['case', ['>', ['get', 'n'], 0], ['concat', ['get', 'name'], '\n', ['to-string', ['get', 'n']]], ['get', 'name']]), 'text-font': ['Noto Sans Bold'], 'text-size': ex(['interpolate', ['linear'], ['zoom'], 5.6, 10, 9, 13]), 'text-max-width': 7, 'symbol-sort-key': ex(['-', ['get', 'n']]) }, paint: { 'text-color': '#f1f5ff', 'text-halo-color': 'rgba(6,16,40,0.85)', 'text-halo-width': 1.6 } });
 
       // orders: lines from the hub, pins, light pulses and new orders
       map.addSource('arcs', { type: 'geojson', data: empty() });
-      map.addLayer({ id: 'arcs-casing', type: 'line', source: 'arcs', layout: { 'line-cap': 'round' }, paint: { 'line-color': '#fff', 'line-opacity': 0.7, 'line-width': ex(['+', ['get', 'w'], 2.4]) } });
+      map.addLayer({ id: 'arcs-casing', type: 'line', source: 'arcs', layout: { 'line-cap': 'round' }, paint: { 'line-color': SEA, 'line-opacity': 0.55, 'line-width': ex(['+', ['get', 'w'], 2.4]) } });
       map.addLayer({ id: 'arcs-solid', type: 'line', source: 'arcs', filter: ['==', ['get', 'kind'], 'ship'], layout: { 'line-cap': 'round' }, paint: { 'line-color': KCOLOR.ship, 'line-opacity': 0.92, 'line-width': ['get', 'w'] } });
       map.addLayer({ id: 'arcs-dash', type: 'line', source: 'arcs', filter: ['!=', ['get', 'kind'], 'ship'], paint: { 'line-color': ex(['match', ['get', 'kind'], 'prep', KCOLOR.prep, KCOLOR.ret]), 'line-opacity': 0.92, 'line-width': ['get', 'w'], 'line-dasharray': [2, 2] } });
       map.addSource('pins', { type: 'geojson', data: empty() });
       map.addLayer({ id: 'pins', type: 'circle', source: 'pins', paint: { 'circle-radius': ex(['interpolate', ['linear'], ['zoom'], 4, ['+', 2.5, ['*', 1.6, ['sqrt', ['get', 't']]]], 9, ['+', 5, ['*', 2.4, ['sqrt', ['get', 't']]]]]), 'circle-color': ex(['match', ['get', 'kind'], 'prep', KCOLOR.prep, 'ret', KCOLOR.ret, KCOLOR.ship]), 'circle-stroke-color': '#fff', 'circle-stroke-width': 1.5 } });
-      map.addLayer({ id: 'pin-codes', type: 'symbol', source: 'pins', minzoom: 8.2, layout: { 'text-field': ['get', 'pin'], 'text-font': ['Noto Sans Regular'], 'text-size': 11, 'text-offset': [0, 1.3], 'text-optional': true }, paint: { 'text-color': '#4a3a1e', 'text-halo-color': 'rgba(255,255,255,0.9)', 'text-halo-width': 1.6 } });
+      map.addLayer({ id: 'pin-codes', type: 'symbol', source: 'pins', minzoom: 8.2, layout: { 'text-field': ['get', 'pin'], 'text-font': ['Noto Sans Regular'], 'text-size': 11, 'text-offset': [0, 1.3], 'text-optional': true }, paint: { 'text-color': '#e6eeff', 'text-halo-color': 'rgba(6,16,40,0.9)', 'text-halo-width': 1.6 } });
       map.addSource('pulses', { type: 'geojson', data: empty() });
       map.addLayer({ id: 'pulses', type: 'circle', source: 'pulses', paint: { 'circle-radius': 4.2, 'circle-color': '#fff', 'circle-stroke-width': 2, 'circle-stroke-color': ex(['match', ['get', 'kind'], 'prep', KCOLOR.prep, 'ret', KCOLOR.ret, KCOLOR.ship]) } });
       map.addSource('fresh-line', { type: 'geojson', data: empty() });
@@ -370,7 +387,7 @@ export const RealMapView: React.FC<MapViewProps> = ({ orders, onRefresh }) => {
     if (document.getElementById('zl-hub-css')) return;
     const st = document.createElement('style');
     st.id = 'zl-hub-css';
-    st.textContent = `.zl-hub{position:relative;width:34px;height:34px;pointer-events:auto}.zl-hub-dot{position:absolute;inset:9px;border-radius:50%;background:#062018;border:3px solid #fff;box-shadow:0 2px 8px rgba(0,0,0,.5)}.zl-hub b{position:absolute;left:50%;top:-18px;transform:translateX(-50%);font:700 11px DM Sans,system-ui,sans-serif;color:#2e2008;text-shadow:0 0 3px #fff,0 0 3px #fff,0 0 3px #fff}.zl-hub-ring{position:absolute;inset:0;border-radius:50%;border:2px solid rgba(13,110,100,.8);animation:zl-ring 2.2s ease-out infinite}.zl-hub-ring2{animation-delay:1.1s}@keyframes zl-ring{from{transform:scale(.4);opacity:.9}to{transform:scale(2.2);opacity:0}}`;
+    st.textContent = `.zl-hub{position:relative;width:34px;height:34px;pointer-events:auto}.zl-hub-dot{position:absolute;inset:9px;border-radius:50%;background:#0a84ff;border:3px solid #fff;box-shadow:0 2px 8px rgba(0,0,0,.5)}.zl-hub b{position:absolute;left:50%;top:-18px;transform:translateX(-50%);font:700 11px DM Sans,system-ui,sans-serif;color:#fff;text-shadow:0 0 3px #06102a,0 0 3px #06102a,0 0 4px #06102a}.zl-hub-ring{position:absolute;inset:0;border-radius:50%;border:2px solid rgba(90,200,250,.85);animation:zl-ring 2.2s ease-out infinite}.zl-hub-ring2{animation-delay:1.1s}@keyframes zl-ring{from{transform:scale(.4);opacity:.9}to{transform:scale(2.2);opacity:0}}`;
     document.head.appendChild(st);
   }, []);
 
@@ -690,8 +707,8 @@ export const RealMapView: React.FC<MapViewProps> = ({ orders, onRefresh }) => {
   const districtName = district ? district.split('|')[1] : null;
 
   const dotColor = (k: Kind) => (k === 'ret' ? '#fb923c' : k === 'ship' ? '#38e1ff' : '#facc15');
-  const GLASS: React.CSSProperties = { background: 'rgba(255,252,244,.94)', color: '#1b1209', backdropFilter: 'blur(6px)', WebkitBackdropFilter: 'blur(6px)', border: '1px solid rgba(60,40,10,.2)' };
-  const chip = (on: boolean, accent: string): React.CSSProperties => ({ ...GLASS, border: `1px solid ${on ? accent : 'rgba(60,40,10,.2)'}`, boxShadow: on ? `0 0 0 1.5px ${accent} inset` : undefined, opacity: on ? 1 : 0.62 });
+  const GLASS: React.CSSProperties = { background: 'rgba(28,32,46,.74)', color: '#f2f5ff', backdropFilter: 'blur(22px) saturate(1.6)', WebkitBackdropFilter: 'blur(22px) saturate(1.6)', border: '1px solid rgba(255,255,255,.14)' };
+  const chip = (on: boolean, accent: string): React.CSSProperties => ({ ...GLASS, border: `1px solid ${on ? accent : 'rgba(255,255,255,.14)'}`, boxShadow: on ? `0 0 0 1.5px ${accent} inset` : undefined, opacity: on ? 1 : 0.62 });
 
   return (
     <div className="p-4 md:p-6 space-y-4 max-w-[88rem] mx-auto pb-24 md:pb-8">
@@ -713,10 +730,10 @@ export const RealMapView: React.FC<MapViewProps> = ({ orders, onRefresh }) => {
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_22rem] gap-4 items-start">
-        <section className="rounded-[28px] overflow-hidden relative" style={{ background: '#cfe3ef', boxShadow: '0 18px 50px -24px rgba(20,60,100,.55)' }} aria-label="Map">
+        <section className="rounded-[28px] overflow-hidden relative" style={{ background: SEA, boxShadow: '0 18px 50px -24px rgba(4,12,40,.7)' }} aria-label="Map">
           <div className="h-[24rem] md:h-[40rem] w-full relative">
             <div ref={box} style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 }} role="application" aria-label="3D map of India with every state and district, and a line from your hub to every pin code that has orders" />
-            {failed && <p className="absolute inset-0 grid place-items-center text-sm p-6 text-center" style={{ color: '#0b2a40' }}>This browser could not start the 3D map. Try Chrome or Safari with hardware acceleration on.</p>}
+            {failed && <p className="absolute inset-0 grid place-items-center text-sm p-6 text-center" style={{ color: '#dbe7ff' }}>This browser could not start the 3D map. Try Chrome or Safari with hardware acceleration on.</p>}
             {!pins && !failed && <p className="absolute left-1/2 -translate-x-1/2 bottom-16 text-xs rounded-full px-3 py-1.5 z-10" style={GLASS}>Loading pin codes…</p>}
             <ul className="absolute left-3 bottom-8 z-10 space-y-1.5 max-w-[16rem] pointer-events-none" aria-live="polite">
               {events.map((e) => (
@@ -741,7 +758,7 @@ export const RealMapView: React.FC<MapViewProps> = ({ orders, onRefresh }) => {
               const g = data?.list.find((x) => x.norm === focusNorm);
               const dt = district ? data?.distTotals.get(district) : null;
               return (
-                <div className="rounded-2xl px-4 py-3 max-w-[15rem]" style={{ ...GLASS, borderColor: 'rgba(13,110,100,.5)' }} aria-live="polite">
+                <div className="rounded-2xl px-4 py-3 max-w-[15rem]" style={{ ...GLASS, borderColor: 'rgba(90,200,250,.45)' }} aria-live="polite">
                   <p className="text-xl font-bold k-display leading-tight">{districtName || stateName}</p>
                   <p className="text-xs mt-0.5" style={{ opacity: 0.75 }}>
                     {district ? `${stateName} · ${dt ? `${num(dt.total)} order${dt.total === 1 ? '' : 's'}` : 'No orders yet'}` : `${g ? `${num(g.total)} order${g.total === 1 ? '' : 's'} · ${g.nodes.length} pin code${g.nodes.length === 1 ? '' : 's'}` : 'No orders yet'} · ${distRows.length} district${distRows.length === 1 ? '' : 's'}`}
@@ -756,16 +773,16 @@ export const RealMapView: React.FC<MapViewProps> = ({ orders, onRefresh }) => {
           </div>
 
           {/* The buttons sit under the map, so nothing covers it */}
-          <div className="flex flex-wrap items-center justify-center gap-2 px-3 py-3 text-xs font-semibold" style={{ background: 'rgba(255,252,244,.97)', color: '#1b1209', borderTop: '1px solid rgba(60,40,10,.15)' }}>
-            <button onClick={() => setOrbit((v) => !v)} aria-label="Rotate the map with your finger or mouse" aria-pressed={orbit} className="flex items-center gap-1.5 rounded-full px-3.5 py-2" style={chip(orbit, '#0f766e')} title="Drag the map to turn it all the way round and tilt it. You can also right-click and drag."><Rotate3d className="w-4 h-4" /> <span className="max-md:hidden">Rotate</span></button>
-            <button onClick={() => setSpin((v) => !v)} aria-label={spin ? 'Stop spinning' : 'Spin the map'} aria-pressed={spin} className="flex items-center gap-1.5 rounded-full px-3.5 py-2" style={chip(spin, '#0f766e')}>{spin ? <Pause className="w-4 h-4" /> : <Play className="w-4 h-4" />} <span className="max-md:hidden">{spin ? 'Stop' : 'Spin'}</span></button>
+          <div className="flex flex-wrap items-center justify-center gap-2 px-3 py-3 text-xs font-semibold" style={{ background: 'rgba(20,24,36,.97)', color: '#f2f5ff', borderTop: '1px solid rgba(255,255,255,.1)' }}>
+            <button onClick={() => setOrbit((v) => !v)} aria-label="Rotate the map with your finger or mouse" aria-pressed={orbit} className="flex items-center gap-1.5 rounded-full px-3.5 py-2" style={chip(orbit, '#30d158')} title="Drag the map to turn it all the way round and tilt it. You can also right-click and drag."><Rotate3d className="w-4 h-4" /> <span className="max-md:hidden">Rotate</span></button>
+            <button onClick={() => setSpin((v) => !v)} aria-label={spin ? 'Stop spinning' : 'Spin the map'} aria-pressed={spin} className="flex items-center gap-1.5 rounded-full px-3.5 py-2" style={chip(spin, '#30d158')}>{spin ? <Pause className="w-4 h-4" /> : <Play className="w-4 h-4" />} <span className="max-md:hidden">{spin ? 'Stop' : 'Spin'}</span></button>
             <button onClick={resetView} aria-label="Reset the view" className="flex items-center gap-1.5 rounded-full px-3.5 py-2" style={GLASS}><Maximize className="w-4 h-4" /> <span className="max-md:hidden">Reset view</span></button>
             <button onClick={() => setFlat((v) => !v)} aria-label="Switch 3D and flat view" aria-pressed={flat} className="flex items-center gap-1.5 rounded-full px-3.5 py-2" style={GLASS}><Move3d className="w-4 h-4" /> <span className="max-md:hidden">{flat ? '3D view' : 'Flat view'}</span></button>
-            <button onClick={() => setRelief((v) => !v)} aria-label="Show mountains and hills in 3D" aria-pressed={relief} className="flex items-center gap-1.5 rounded-full px-3.5 py-2" style={chip(relief, '#0f766e')}><Mountain className="w-4 h-4" /> <span className="max-md:hidden">Hills</span></button>
+            <button onClick={() => setRelief((v) => !v)} aria-label="Show mountains and hills in 3D" aria-pressed={relief} className="flex items-center gap-1.5 rounded-full px-3.5 py-2" style={chip(relief, '#30d158')}><Mountain className="w-4 h-4" /> <span className="max-md:hidden">Hills</span></button>
             <span className="w-px h-6 mx-1 bg-black/15 max-md:hidden" aria-hidden="true" />
-            <button onClick={() => setShowSent((v) => !v)} aria-label="Sent parcels" aria-pressed={showSent} className="flex items-center gap-1.5 rounded-full px-3.5 py-2" style={chip(showSent, '#0b6bcb')}><Truck className="w-4 h-4" style={{ color: '#0b6bcb' }} /> <span className="max-md:hidden">Sent</span></button>
-            <button onClick={() => setShowPrep((v) => !v)} aria-label="Waiting orders" aria-pressed={showPrep} className="flex items-center gap-1.5 rounded-full px-3.5 py-2" style={chip(showPrep, '#d97706')}><Box className="w-4 h-4" style={{ color: '#b45309' }} /> <span className="max-md:hidden">Waiting</span></button>
-            <button onClick={() => setShowReturn((v) => !v)} aria-label="Returned parcels" aria-pressed={showReturn} className="flex items-center gap-1.5 rounded-full px-3.5 py-2" style={chip(showReturn, '#dc2626')}><Undo2 className="w-4 h-4" style={{ color: '#c2410c' }} /> <span className="max-md:hidden">Returned</span></button>
+            <button onClick={() => setShowSent((v) => !v)} aria-label="Sent parcels" aria-pressed={showSent} className="flex items-center gap-1.5 rounded-full px-3.5 py-2" style={chip(showSent, KCOLOR.ship)}><Truck className="w-4 h-4" style={{ color: KCOLOR.ship }} /> <span className="max-md:hidden">Sent</span></button>
+            <button onClick={() => setShowPrep((v) => !v)} aria-label="Waiting orders" aria-pressed={showPrep} className="flex items-center gap-1.5 rounded-full px-3.5 py-2" style={chip(showPrep, KCOLOR.prep)}><Box className="w-4 h-4" style={{ color: KCOLOR.prep }} /> <span className="max-md:hidden">Waiting</span></button>
+            <button onClick={() => setShowReturn((v) => !v)} aria-label="Returned parcels" aria-pressed={showReturn} className="flex items-center gap-1.5 rounded-full px-3.5 py-2" style={chip(showReturn, KCOLOR.ret)}><Undo2 className="w-4 h-4" style={{ color: KCOLOR.ret }} /> <span className="max-md:hidden">Returned</span></button>
             <span className="w-px h-6 mx-1 bg-black/15 max-md:hidden" aria-hidden="true" />
             <button onClick={demo} aria-label="Preview a new order on the map" className="flex items-center gap-1.5 rounded-full px-3.5 py-2" style={GLASS} title="Shows how a new order will appear on the map, on a random pin code. Nothing is saved."><Sparkles className="w-4 h-4" /> <span className="max-md:hidden">Preview new order</span></button>
           </div>
