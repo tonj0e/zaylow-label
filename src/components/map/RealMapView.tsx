@@ -290,7 +290,8 @@ export const RealMapView: React.FC<MapViewProps> = ({ orders, onRefresh }) => {
       });
     } catch { setFailed(true); return; }
     mapRef.current = map;
-    map.on('error', (e) => { console.warn('[map]', String(e?.error?.message || e).slice(0, 240)); if (!started && /style|sprite|Failed to fetch/i.test(String(e?.error?.message || ''))) { /* the style never arrived; the failure note is shown after a wait */ } });
+    // if the height tiles cannot be loaded (blocked by an extension or a slow network), drop the 3D hills so the flat map still draws
+    map.on('error', (e) => { if ((e as { sourceId?: string }).sourceId === 'dem') setRelief(false); console.warn('[map]', String(e?.error?.message || e).slice(0, 240)); if (!started && /style|sprite|Failed to fetch/i.test(String(e?.error?.message || ''))) { /* the style never arrived; the failure note is shown after a wait */ } });
     const giveUp = setTimeout(() => { if (!started) setFailed(true); }, 25000);
     const store = R.current;
     let started = false;
@@ -374,6 +375,7 @@ export const RealMapView: React.FC<MapViewProps> = ({ orders, onRefresh }) => {
       hub.innerHTML = '<i class="zl-hub-ring"></i><i class="zl-hub-ring zl-hub-ring2"></i><span class="zl-hub-dot"></span><b>HUB</b>';
       hub.title = 'Your hub: Cherthala, Alappuzha';
       new maplibregl.Marker({ element: hub, anchor: 'center' }).setLngLat(HUB).addTo(map);
+      setTimeout(() => { try { if (!map.isSourceLoaded('dem')) setRelief(false); } catch { /* map is gone */ } }, 9000);
       setReady(true);
     } catch (err) { console.warn('[map] setup failed', String((err as Error)?.message || err)); started = false; setFailed(true); } };
     map.on('style.load', setup);
