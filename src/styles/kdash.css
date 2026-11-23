@@ -171,3 +171,8 @@
 @media (hover: none) and (pointer: coarse) {
   input:not([type=checkbox]):not([type=radio]):not([type=range]):not([type=file]), select, textarea { font-size: 16px !important; }
 }
+
+/* The shipping label is always black on white, in both light and dark mode, so it prints and downloads correctly */
+.kdash.kdash .thermal-label-element{background-color:#fff !important;color:#000 !important;border-color:#000 !important}
+.kdash.kdash .thermal-label-element :is([class~="bg-white"]){background-color:#fff !important}
+.kdash.kdash .thermal-label-element *:not([class~="text-white"]){color:#000 !important;border-color:#000 !important}
