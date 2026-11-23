@@ -156,7 +156,7 @@ export function App() {
   const fetchOrders = async () => {
     lastOrderFetch.current = Date.now();
     // callers that ask at the same moment share one download of the orders
-    const loadedOrders = await fetchCached('orders-all', () => DataService.getOrders(), 1500);
+    const loadedOrders = await fetchCached('orders-all', () => DataService.getOrders(), ordersRef.current.length ? 1500 : 30000); // the first call reuses the download that started during the opening animation
     setOrdersLoaded(true);
     setOrdersFresh(true);
     // Only touch state when something actually changed, so pages don't re-render for nothing

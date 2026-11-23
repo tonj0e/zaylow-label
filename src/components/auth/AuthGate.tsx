@@ -5,6 +5,7 @@ import { supabase } from '../../services/supabase';
 import { AuthService } from '../../services/authService';
 import { InstallApp } from './InstallApp';
 import { Splash, splashSeen } from './Splash';
+import { warmUp } from '../../services/prefetch';
 
 /** Nothing in the app is shown until someone has signed in. */
 export const AuthGate: React.FC<{ children: React.ReactNode }> = ({ children }) => {
@@ -32,6 +33,8 @@ export const AuthGate: React.FC<{ children: React.ReactNode }> = ({ children }) 
     if (!r.ok) { setError(r.message || 'Could not sign in.'); setPassword(''); }
     setBusy(false);
   };
+
+  useEffect(() => { if (session) warmUp(); }, [session]); // start loading the orders during the opening animation
 
   if (session) return <><Splash onDone={() => setOpened(true)} />{opened ? children : null}</>;
 

@@ -15,6 +15,12 @@ export const CACHE = {
   prices: { key: 'prepaid-prices', fetch: () => PriceService.getAll() },
 } as const;
 
+/** Start downloading the orders and the warehouse data while the opening animation plays, so the dashboard is ready the moment the app starts. */
+export const warmUp = () => {
+  void fetchCached('orders-all', () => DataService.getOrders(), 30000).catch(() => {});
+  prefetchAll();
+};
+
 /** Start every download in parallel right after the orders arrive, so the first visit to any page is already warm. */
 export const prefetchAll = () => {
   Object.values(CACHE).forEach((c) => { void fetchCached(c.key, c.fetch as () => Promise<unknown>, 30000).catch(() => {}); });
