@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Search, RefreshCw, Plus, Phone, X, FileDown, Paperclip, Trash2, Pencil, Store, Download, Loader2, Box, Link2, Phone as PhoneIcon } from 'lucide-react';
 import {
-  SupplierService, KIND_LABEL, friendlyError, totalsFor,
+  SupplierService, KIND_LABEL, friendlyError, totalsFor, landedPerPiece,
   type Supplier, type Purchase, type SupplierKind, type SupplierCarton,
 } from '../../services/supplierService';
 
@@ -86,6 +86,7 @@ const PurchaseForm: React.FC<{ supplier: Supplier; initial?: Purchase; onSaved: 
     purchase_date: initial?.purchase_date || today(), item_name: initial?.item_name || '',
     cartons: initial ? String(initial.cartons || '') : '', units_per_carton: initial?.units_per_carton != null ? String(initial.units_per_carton) : '',
     quantity: initial?.quantity != null ? String(initial.quantity) : '', price: initial?.price_per_carton != null ? String(initial.price_per_carton) : '',
+    ship: initial?.shipping_charge ? String(initial.shipping_charge) : '', deliv: initial?.delivery_charge ? String(initial.delivery_charge) : '',
     total: initial ? String(initial.total_paid) : '', notes: initial?.notes || '',
   });
   const [totalEdited, setTotalEdited] = useState(!!initial);
@@ -96,8 +97,13 @@ const PurchaseForm: React.FC<{ supplier: Supplier; initial?: Purchase; onSaved: 
 
   const count = parseFloat(loose ? f.quantity : f.cartons) || 0;
   const price = parseFloat(f.price) || 0;
-  const auto = count * price;
+  const ship = parseFloat(f.ship) || 0;
+  const deliv = parseFloat(f.deliv) || 0;
+  const goods = count * price;
+  const auto = goods + ship + deliv;
   const total = totalEdited ? f.total : (auto ? String(Math.round(auto * 100) / 100) : '');
+  const pieces = loose ? count : count * (parseFloat(f.units_per_carton) || 0);
+  const perPiece = pieces > 0 && parseFloat(total) > 0 ? parseFloat(total) / pieces : 0;
 
   const save = async () => {
     if (!f.item_name.trim()) { setErr(loose ? 'Enter what you bought, for example "Box 4x6".' : 'Enter the product name.'); return; }
@@ -112,7 +118,7 @@ const PurchaseForm: React.FC<{ supplier: Supplier; initial?: Purchase; onSaved: 
       await SupplierService.savePurchase({
         supplier_id: supplier.id, purchase_date: f.purchase_date, item_name: f.item_name.trim(),
         cartons: loose ? 0 : count, units_per_carton: loose ? null : (parseFloat(f.units_per_carton) || null),
-        quantity: loose ? count : null, price_per_carton: price || null, total_paid: parseFloat(total),
+        quantity: loose ? count : null, price_per_carton: price || null, total_paid: parseFloat(total), shipping_charge: ship, delivery_charge: deliv,
         bill_path: bill.path, bill_name: bill.name, batch_id: initial?.batch_id || null, notes: f.notes.trim() || null,
       }, initial?.id);
       onSaved();
@@ -138,9 +144,14 @@ const PurchaseForm: React.FC<{ supplier: Supplier; initial?: Purchase; onSaved: 
             <Field label="Price per carton (₹)"><input className="k-field" type="number" min="0" step="0.01" name="price" value={f.price} onChange={set} /></Field>
           </div>
         )}
+        <div className="grid grid-cols-2 gap-4">
+          <Field label="Shipping charge (₹)"><input className="k-field" type="number" min="0" step="0.01" name="ship" value={f.ship} onChange={set} placeholder="0" /></Field>
+          <Field label="Auto / local delivery (₹)"><input className="k-field" type="number" min="0" step="0.01" name="deliv" value={f.deliv} onChange={set} placeholder="0" /></Field>
+        </div>
         <Field label="Total money paid (₹)">
           <input className="k-field" type="number" min="0" step="0.01" value={total} onChange={(e) => { setTotalEdited(true); setF((p) => ({ ...p, total: e.target.value })); }} placeholder="0.00" />
-          {!totalEdited && auto > 0 && <span className="block text-xs k-muted mt-1.5">Worked out from quantity × price. Change it if you paid a different amount.</span>}
+          {!totalEdited && auto > 0 && <span className="block text-xs k-muted mt-1.5">Worked out from quantity × price + shipping + delivery. Change it if you paid a different amount.</span>}
+          {perPiece > 0 && <span className="block text-sm font-semibold mt-1.5">Real cost per piece: ₹{perPiece.toFixed(2)} <span className="k-muted font-normal">({pieces.toLocaleString('en-IN')} pieces)</span></span>}
         </Field>
         <Field label="Bill or invoice (photo or PDF)">
           <input className="k-field" type="file" accept="image/*,application/pdf" onChange={(e) => setFile(e.target.files?.[0] || null)} />
@@ -271,7 +282,7 @@ const SupplierDetail: React.FC<{ supplier: Supplier; names: Map<string, string>;
                   <p className="font-semibold truncate">{p.item_name}</p>
                   <p className="text-xs k-muted">
                     {dmy(p.purchase_date)} · {p.cartons > 0 ? `${p.cartons} carton${p.cartons === 1 ? '' : 's'}${p.units_per_carton ? ` × ${p.units_per_carton} units` : ''}` : `${p.quantity ?? 0} pcs`}
-                    {p.price_per_carton ? ` · ${inr(p.price_per_carton)} each` : ''}
+                    {p.price_per_carton ? ` · ${inr(p.price_per_carton)} each` : ''}{(p.shipping_charge || 0) + (p.delivery_charge || 0) > 0 ? ` · +${inr((p.shipping_charge || 0) + (p.delivery_charge || 0))} shipping` : ''}{landedPerPiece(p) > 0 ? ` · ₹${landedPerPiece(p).toFixed(2)} per piece` : ''}
                   </p>
                 </div>
                 <p className="font-bold tabular-nums">{inr(p.total_paid)}</p>

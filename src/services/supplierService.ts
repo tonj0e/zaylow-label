@@ -13,7 +13,7 @@ export interface Supplier {
 export interface Purchase {
   id: string; created_at: string; supplier_id: string; purchase_date: string; item_name: string;
   cartons: number; units_per_carton?: number | null; quantity?: number | null; price_per_carton?: number | null;
-  total_paid: number; bill_path?: string | null; bill_name?: string | null; batch_id?: string | null; notes?: string | null;
+  total_paid: number; shipping_charge?: number | null; delivery_charge?: number | null; bill_path?: string | null; bill_name?: string | null; batch_id?: string | null; notes?: string | null;
 }
 export interface SupplierCarton {
   id: string; location: string | null; created_at: string; supplier_id: string | null;
@@ -27,6 +27,7 @@ const num = (v: unknown) => (v === null || v === undefined || v === '' ? 0 : Num
 /** One clear sentence for the usual cause: the owner has not run the supplier SQL yet */
 export const friendlyError = (e: any): string => {
   const m = String(e?.message || e || '');
+  if (/shipping_charge|delivery_charge/i.test(m)) return 'Shipping and delivery charges cannot be saved yet. Run the purchase extra charges SQL in Supabase first.';
   if (/supplier_id/i.test(m) && /column|schema cache/i.test(m)) return 'Cartons cannot be linked to suppliers yet. Run the carton supplier SQL in Supabase first.';
   if (/relation .*(suppliers|supplier_purchases)|schema cache|does not exist|42P01|PGRST205/i.test(m)) return 'The supplier tables are not in the database yet. Run the supplier SQL in Supabase first.';
   if (/bucket|storage/i.test(m)) return 'The bill storage is not set up yet. Run the supplier SQL in Supabase first.';
@@ -42,7 +43,7 @@ export const SupplierService = {
   async purchases(): Promise<Purchase[]> {
     const { data, error } = await db.from('supplier_purchases').select('*').order('purchase_date', { ascending: false }).order('created_at', { ascending: false });
     if (error) throw error;
-    return ((data || []) as Purchase[]).map((p) => ({ ...p, cartons: num(p.cartons), total_paid: num(p.total_paid) }));
+    return ((data || []) as Purchase[]).map((p) => ({ ...p, cartons: num(p.cartons), total_paid: num(p.total_paid), shipping_charge: num(p.shipping_charge), delivery_charge: num(p.delivery_charge) }));
   },
   async save(input: SupplierInput, id?: string): Promise<Supplier> {
     const q = id ? db.from('suppliers').update(input).eq('id', id) : db.from('suppliers').insert(input);
@@ -108,6 +109,11 @@ export const SupplierService = {
     if (error) throw error;
   },
 };
+
+/** Pieces in a purchase (cartons × units, or loose quantity) */
+export const piecesOf = (p: Purchase) => (p.cartons > 0 ? p.cartons * num(p.units_per_carton) : num(p.quantity));
+/** Real cost of one piece: everything paid (goods + shipping + delivery) ÷ pieces */
+export const landedPerPiece = (p: Purchase) => { const n = piecesOf(p); return n > 0 ? num(p.total_paid) / n : 0; };
 
 /** Totals for one supplier from its purchases */
 export const totalsFor = (list: Purchase[]) => {
