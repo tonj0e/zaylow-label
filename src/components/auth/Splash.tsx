@@ -47,7 +47,7 @@ export const Splash: React.FC<{ onDone?: () => void }> = ({ onDone }) => {
         .zs-bg{position:absolute;inset:0;display:block}
         .zs-logo{position:absolute;left:50%;top:50%;width:104px;height:104px;margin:-52px 0 0 -52px;object-fit:contain;
           animation:zs-logo-in .6s cubic-bezier(.22,1,.36,1) both,zs-logo-out .3s cubic-bezier(.5,0,.75,0) .8s forwards}
-        .zs-word{position:absolute;left:50%;top:50%;font:800 clamp(30px,8vw,46px)/1 'DM Sans',system-ui,sans-serif;letter-spacing:.1em;will-change:transform,opacity;color:#0a0a0a;white-space:nowrap;
+        .zs-word{position:absolute;left:50%;top:50%;font:600 clamp(36px,10vw,58px)/1 'Cormorant Garamond',Georgia,'Times New Roman',serif;letter-spacing:.3em;padding-left:.3em;will-change:transform,opacity;color:#0b1220;white-space:nowrap;
           transform:translate(-50%,-50%);opacity:0;animation:zs-word-in .4s cubic-bezier(.22,1,.36,1) 1s both,zs-word-out .25s cubic-bezier(.6,0,.9,.4) 1.55s forwards}
         .zs-dot{position:absolute;left:50%;top:50%;width:14px;height:14px;margin:-7px 0 0 -7px;border-radius:50%;background:#0a0a0a;opacity:0;
           animation:zs-dot-in .12s ease 1.7s both,zs-dot-go .45s cubic-bezier(.65,0,.35,1) 1.82s forwards,zs-dot-out .1s ease 2.32s forwards}
