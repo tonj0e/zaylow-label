@@ -17,6 +17,7 @@ import {
   Layers,
   AlertTriangle,
   ScanLine,
+  Sparkles,
   Search,
   Target,
   Undo2,
@@ -32,6 +33,7 @@ interface DashboardViewProps {
   onNavigateToOrders: () => void;
   onNavigateToGenerator: (order?: Order) => void;
   onNavigateToBulk: () => void;
+  onNavigateToAgent: () => void;
   onUpdateStatus: (id: string, status: OrderStatus) => void;
   onUpdateTracking: (id: string, trackingNumber: string, shippingLabelUrl: string | null) => void;
 }
@@ -281,6 +283,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   onNavigateToOrders,
   onNavigateToGenerator,
   onNavigateToBulk,
+  onNavigateToAgent,
   onUpdateStatus,
   onUpdateTracking,
 }) => {
@@ -508,8 +511,11 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           <button onClick={onNavigateToBulk} className="k-btn-ghost rounded-full px-4 py-2.5 text-sm font-semibold flex items-center gap-1.5 max-md:justify-center">
             <Zap className="w-4 h-4 k-lime-text" /> Bulk import
           </button>
-          <button onClick={() => setScannerOpen(true)} className="k-btn-lime rounded-full px-5 py-3 text-sm font-bold flex items-center gap-2 shadow-lg max-md:col-span-2 max-md:justify-center" style={{ boxShadow: '0 8px 24px -8px var(--lime)' }}>
+          <button onClick={() => setScannerOpen(true)} className="k-btn-lime rounded-full px-5 py-3 text-sm font-bold flex items-center gap-2 shadow-lg max-md:hidden" style={{ boxShadow: '0 8px 24px -8px var(--lime)' }}>
             <ScanLine className="w-4 h-4" /> Scan to ship
+          </button>
+          <button onClick={onNavigateToAgent} className="k-btn-lime rounded-full px-5 py-3 text-sm font-bold flex items-center gap-2 shadow-lg md:hidden col-span-2 justify-center" style={{ boxShadow: '0 8px 24px -8px var(--lime)' }}>
+            <Sparkles className="w-4 h-4" /> AI assistant
           </button>
         </div>
       </header>

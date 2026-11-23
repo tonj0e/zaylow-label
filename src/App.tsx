@@ -450,6 +450,7 @@ export function App() {
                 navigateTo('generator');
               }}
               onNavigateToBulk={() => navigateTo('bulk')}
+              onNavigateToAgent={() => navigateTo('agent')}
               onUpdateStatus={handleUpdateStatus}
               onUpdateTracking={handleUpdateTracking}
             />
