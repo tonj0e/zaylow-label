@@ -89,7 +89,13 @@ const PurchaseForm: React.FC<{ supplier: Supplier; initial?: Purchase; onSaved: 
     ship: initial?.shipping_charge ? String(initial.shipping_charge) : '', deliv: initial?.delivery_charge ? String(initial.delivery_charge) : '',
     total: initial ? String(initial.total_paid) : '', notes: initial?.notes || '',
   });
-  const [totalEdited, setTotalEdited] = useState(!!initial);
+  // Keep a hand-typed total only when it differs from quantity × price + charges; otherwise recalculate as charges change
+  const [totalEdited, setTotalEdited] = useState(() => {
+    if (!initial) return false;
+    const n = loose ? (initial.quantity || 0) : (initial.cartons || 0);
+    const calc = n * (initial.price_per_carton || 0) + (initial.shipping_charge || 0) + (initial.delivery_charge || 0);
+    return !(calc > 0 && Math.abs(calc - initial.total_paid) < 0.01) && !(initial.price_per_carton && Math.abs(n * initial.price_per_carton - initial.total_paid) < 0.01);
+  });
   const [file, setFile] = useState<File | null>(null);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
@@ -146,12 +152,13 @@ const PurchaseForm: React.FC<{ supplier: Supplier; initial?: Purchase; onSaved: 
         )}
         <div className="grid grid-cols-2 gap-4">
           <Field label="Shipping charge (₹)"><input className="k-field" type="number" min="0" step="0.01" name="ship" value={f.ship} onChange={set} placeholder="0" /></Field>
-          <Field label="Auto / local delivery (₹)"><input className="k-field" type="number" min="0" step="0.01" name="deliv" value={f.deliv} onChange={set} placeholder="0" /></Field>
+          <Field label="Door delivery / auto (₹, leave 0 if free)"><input className="k-field" type="number" min="0" step="0.01" name="deliv" value={f.deliv} onChange={set} placeholder="0" /></Field>
         </div>
         <Field label="Total money paid (₹)">
           <input className="k-field" type="number" min="0" step="0.01" value={total} onChange={(e) => { setTotalEdited(true); setF((p) => ({ ...p, total: e.target.value })); }} placeholder="0.00" />
           {!totalEdited && auto > 0 && <span className="block text-xs k-muted mt-1.5">Worked out from quantity × price + shipping + delivery. Change it if you paid a different amount.</span>}
           {perPiece > 0 && <span className="block text-sm font-semibold mt-1.5">Real cost per piece: ₹{perPiece.toFixed(2)} <span className="k-muted font-normal">({pieces.toLocaleString('en-IN')} pieces)</span></span>}
+          {perPiece > 0 && <span className="block text-xs k-muted mt-1">Goods ₹{Math.round(goods * 100) / 100} + shipping ₹{ship} + delivery ₹{deliv} = ₹{Math.round((goods + ship + deliv) * 100) / 100}, divided by {pieces.toLocaleString('en-IN')} pieces.</span>}
         </Field>
         <Field label="Bill or invoice (photo or PDF)">
           <input className="k-field" type="file" accept="image/*,application/pdf" onChange={(e) => setFile(e.target.files?.[0] || null)} />
