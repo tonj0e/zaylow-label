@@ -35,7 +35,7 @@ export const Header: React.FC<HeaderProps> = ({
         <span className="w-9 h-9 rounded-xl flex items-center justify-center shrink-0" style={{ background: 'var(--card)', border: '1px solid var(--line)' }}>
           {settings.logoUrl ? <img src={settings.logoUrl} alt="" className="w-6 h-6 object-contain dark:invert" /> : <Zap className="w-5 h-5 k-lime-text" />}
         </span>
-        <span className="font-bold k-display text-lg truncate">{settings.companyName || 'ZAYLOW'}</span>
+        <span className="font-semibold text-xl truncate" style={{ fontFamily: "'Cormorant Garamond', Georgia, serif", letterSpacing: '.22em' }}>{settings.companyName || 'ZAYLOW'}</span>
         <div className="ml-auto flex items-center gap-1.5 shrink-0">
           <button onClick={() => setSearching((v) => !v)} aria-label={searching ? 'Close search' : 'Search orders'} aria-expanded={searching} className="k-btn k-btn-ghost w-10 h-10">{searching ? <X className="w-4 h-4" /> : <Search className="w-4 h-4" />}</button>
           <button onClick={onOpenPrintQueue} aria-label={`Print queue, ${queueCount} waiting`} className="relative k-btn k-btn-ghost w-10 h-10">

@@ -46,7 +46,7 @@ export const AuthGate: React.FC<{ children: React.ReactNode }> = ({ children }) 
         <main className="k-card w-full max-w-sm p-6 md:p-8 space-y-6 k-rise">
           <div className="flex items-center gap-3">
             <img src="/zaylow-logo.png" alt="" className="w-10 h-10 object-contain dark:invert" />
-            <div><h1 className="text-2xl font-bold k-display leading-none">ZAYLOW</h1><p className="text-sm k-muted mt-1">Warehouse sign in</p></div>
+            <div><h1 className="text-3xl font-semibold leading-none" style={{ fontFamily: "'Cormorant Garamond', Georgia, serif", letterSpacing: '.22em' }}>ZAYLOW</h1><p className="text-sm k-muted mt-1">Warehouse sign in</p></div>
           </div>
 
           <form onSubmit={submit} className="space-y-4" noValidate>

@@ -182,7 +182,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
             <span className="w-9 h-9 rounded-xl k-btn-lime flex items-center justify-center"><Zap className="w-5 h-5" /></span>
           )}
         </span>
-        <span className="rail-fade whitespace-nowrap font-bold text-base">{settings.companyName || 'ZAYLOW'}</span>
+        <span className="rail-fade whitespace-nowrap font-semibold text-xl" style={{ fontFamily: "'Cormorant Garamond', Georgia, serif", letterSpacing: '.22em' }}>{settings.companyName || 'ZAYLOW'}</span>
         {onClose && mobile && (
           <button onClick={onClose} aria-label="Close menu" className="md:hidden ml-auto w-9 h-9 flex items-center justify-center rounded-full hover:bg-[var(--card2)]"><X className="w-5 h-5" /></button>
         )}
