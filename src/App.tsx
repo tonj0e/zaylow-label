@@ -95,6 +95,13 @@ export function App() {
   // usage + crash log for the AI assistant (section names only, no customer data)
   const tabRef = useRef<ActiveTab>(activeTab);
   useEffect(() => { tabRef.current = activeTab; logView(activeTab); }, [activeTab]);
+  // after the app has settled, quietly fetch the map files so the Shipping map opens fast (skipped on data saver)
+  useEffect(() => {
+    const nav = navigator as Navigator & { connection?: { saveData?: boolean } };
+    if (nav.connection?.saveData) return;
+    const t = setTimeout(() => { void pageLoaders.MapView(); void import('./data/inPincodes.json'); void import('./data/indiaDistricts.json'); }, 4000);
+    return () => clearTimeout(t);
+  }, []);
   useEffect(() => installErrorLogging(() => tabRef.current), []);
 
   // Start Telegram bot polling for two-way commands (/today, /pending, etc.)

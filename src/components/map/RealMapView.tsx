@@ -175,6 +175,7 @@ export const RealMapView: React.FC<MapViewProps> = ({ orders, onRefresh }) => {
   const tipEl = useRef<HTMLDivElement>(null);
   const mapRef = useRef<maplibregl.Map | null>(null);
   const [ready, setReady] = useState(false);
+  const [drawn, setDrawn] = useState(false); // the base map tiles have arrived
   const [failed, setFailed] = useState(false);
   const [pins, setPins] = useState<Pins | null>(null);
   const [period, setPeriod] = useState<Period>('90');
@@ -376,6 +377,7 @@ export const RealMapView: React.FC<MapViewProps> = ({ orders, onRefresh }) => {
       hub.title = 'Your hub: Cherthala, Alappuzha';
       new maplibregl.Marker({ element: hub, anchor: 'center' }).setLngLat(HUB).addTo(map);
       setTimeout(() => { try { if (!map.isSourceLoaded('dem')) setRelief(false); } catch { /* map is gone */ } }, 9000);
+      map.once('idle', () => setDrawn(true));
       setReady(true);
     } catch (err) { console.warn('[map] setup failed', String((err as Error)?.message || err)); started = false; setFailed(true); } };
     map.on('style.load', setup);
@@ -748,7 +750,7 @@ export const RealMapView: React.FC<MapViewProps> = ({ orders, onRefresh }) => {
           <div className="h-[24rem] md:h-[40rem] w-full relative">
             <div ref={box} style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 }} role="application" aria-label="3D map of India with every state and district, and a line from your hub to every pin code that has orders" />
             {failed && <p className="absolute inset-0 grid place-items-center text-sm p-6 text-center" style={{ color: '#dbe7ff' }}>This browser could not start the 3D map. Try Chrome or Safari with hardware acceleration on.</p>}
-            {!pins && !failed && <p className="absolute left-1/2 -translate-x-1/2 bottom-16 text-xs rounded-full px-3 py-1.5 z-10" style={GLASS}>Loading pin codes…</p>}
+            {(!pins || !drawn) && !failed && <p className="absolute left-1/2 -translate-x-1/2 bottom-16 text-xs rounded-full px-3 py-1.5 z-10" style={GLASS}>{!pins ? 'Loading pin codes…' : 'Loading the map…'}</p>}
             <ul className="absolute left-3 bottom-8 z-10 space-y-1.5 max-w-[16rem] pointer-events-none" aria-live="polite">
               {events.map((e) => (
                 <li key={e.id} className="text-xs font-semibold text-white rounded-xl px-3 py-2 flex items-center gap-2" style={{ background: 'rgba(4,17,26,.88)', border: `1px solid ${dotColor(e.kind)}` }}>
