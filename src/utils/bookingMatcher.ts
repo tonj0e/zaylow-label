@@ -114,12 +114,27 @@ export function matchBookings(bookings: Booking[], orders: Order[], takenArticle
     });
     candidates.sort((x, y) => y.score - x.score);
 
+    // Nothing matched on PIN or mobile: the PIN may be mistyped on one side. Look for the same name with a PIN that is a digit or two off.
+    if (!candidates.length && pinOf(b.pin)) {
+      const bp = pinOf(b.pin);
+      eligible.forEach((o) => {
+        const op = pinOf(o.customer.pinCode);
+        if (!op || op.length !== bp.length) return;
+        const off = [...bp].filter((c, i) => c !== op[i]).length;
+        const name = nameScore(b.name, o.customer.name);
+        if (off > 2 || name < 2) return;
+        candidates.push({ orderId: o.id, score: name + 1, reasons: [name === 3 ? 'same name' : 'similar name', `PIN differs (file ${bp}, order ${op})`] });
+      });
+      candidates.sort((x, y) => y.score - x.score);
+    }
+
     const top = candidates[0];
     if (!top) return { booking: b, confidence: 'none', candidates: [], note: 'No order with this name and PIN code.' };
     const second = candidates[1];
     const unique = !second || second.score < top.score;
     const confidence: Confidence = top.score >= 5 && unique ? 'sure' : 'check';
-    return { booking: b, confidence, candidates, chosen: top.orderId, note: !unique ? 'More than one order looks the same. Pick the right one.' : undefined };
+    const nearPinOnly = top.reasons.some((r) => r.startsWith('PIN differs'));
+    return { booking: b, confidence, candidates, chosen: top.orderId, note: !unique ? 'More than one order looks the same. Pick the right one.' : nearPinOnly ? 'The PIN code is a little different. Check that this is the right order.' : undefined };
   });
 
   // One order cannot belong to two bookings: if several bookings picked it, a person decides.

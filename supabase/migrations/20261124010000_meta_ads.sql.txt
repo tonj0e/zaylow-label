@@ -1,0 +1,41 @@
+-- Meta ads: money added, nightly balance, and cost settings. Run once in Supabase SQL Editor. Safe to run again.
+create table if not exists public.ad_funds (
+  id uuid primary key default gen_random_uuid(),
+  fund_date date not null,
+  amount numeric not null,
+  note text,
+  created_at timestamptz default now()
+);
+create table if not exists public.ad_balance (
+  balance_date date primary key,      -- balance at 12 a.m. at the END of this day
+  balance numeric not null,
+  updated_at timestamptz default now()
+);
+create table if not exists public.ad_settings (
+  key text primary key,
+  value numeric not null default 0
+);
+insert into public.ad_settings (key, value) values
+  ('product_cost', 248), ('box', 7.41), ('label', 0.87), ('bag', 8.42), ('bag_min_price', 600),
+  ('shipping', 0), ('return_shipping', 0)
+on conflict (key) do nothing;
+
+alter table public.ad_funds enable row level security;
+alter table public.ad_balance enable row level security;
+alter table public.ad_settings enable row level security;
+drop policy if exists "signed in users only" on public.ad_funds;
+drop policy if exists "signed in users only" on public.ad_balance;
+drop policy if exists "signed in users only" on public.ad_settings;
+create policy "signed in users only" on public.ad_funds for all to authenticated using (true) with check (true);
+create policy "signed in users only" on public.ad_balance for all to authenticated using (true) with check (true);
+create policy "signed in users only" on public.ad_settings for all to authenticated using (true) with check (true);
+
+-- Shipping charge (tariff) per parcel, read from the India Post booking file
+create table if not exists public.order_shipping (
+  tracking_number text primary key,
+  tariff numeric not null default 0,
+  updated_at timestamptz default now()
+);
+alter table public.order_shipping enable row level security;
+drop policy if exists "signed in users only" on public.order_shipping;
+create policy "signed in users only" on public.order_shipping for all to authenticated using (true) with check (true);

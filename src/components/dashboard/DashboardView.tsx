@@ -5,6 +5,8 @@ import { DataService } from '../../services/dataService';
 import { useCached } from '../../hooks/useCached';
 import { TrackingScannerModal } from '../orders/TrackingScannerModal';
 import { orderValue } from '../../utils/orderValue';
+import { AdsService, buildStats, orderValue as adsOrderValue, DEFAULT_SETTINGS, type Settings } from '../../services/adsService';
+import { PriceService } from '../../services/priceService';
 import {
   Printer,
   ArrowRight,
@@ -46,7 +48,18 @@ interface StockRow {
 }
 
 type Tab = 'overview' | 'sales' | 'stock';
-type Range = 7 | 30;
+type Range = 'today' | 'yesterday' | '7' | '14' | '30' | '90' | '180' | 'custom';
+/** offset = days back from today the window ends; len = days in the window; text = how the period is named in sentences */
+const RANGES: Record<Range, { label: string; offset: number; len: number; text: string }> = {
+  today: { label: 'Today', offset: 0, len: 1, text: 'today' },
+  yesterday: { label: 'Yesterday', offset: 1, len: 1, text: 'yesterday' },
+  '7': { label: 'Last 7 days', offset: 0, len: 7, text: 'the last 7 days' },
+  '14': { label: 'Last 14 days', offset: 0, len: 14, text: 'the last 14 days' },
+  '30': { label: 'Last 30 days', offset: 0, len: 30, text: 'the last 30 days' },
+  '90': { label: 'Last 3 months', offset: 0, len: 90, text: 'the last 3 months' },
+  '180': { label: 'Last 6 months', offset: 0, len: 180, text: 'the last 6 months' },
+  custom: { label: 'Choose days...', offset: 0, len: 18, text: 'the chosen days' },
+};
 
 const STATUS_DOT: Record<string, string> = {
   Pending: '#f5a623',
@@ -288,7 +301,32 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   onUpdateTracking,
 }) => {
   const [tab, setTab] = useState<Tab>('overview');
-  const [range, setRange] = useState<Range>(30);
+  const [range, setRange] = useState<Range>('30');
+  const [customDays, setCustomDays] = useState(18);
+  const rangeDef = range === 'custom' ? { ...RANGES.custom, len: Math.max(1, Math.min(365, customDays || 1)), text: `the last ${Math.max(1, Math.min(365, customDays || 1))} days` } : RANGES[range];
+  const { offset: rOffset, len: rLen, text: rangeText } = rangeDef;
+  const [costCtx, setCostCtx] = useState<{ s: Settings; t: Map<string, number>; p: Record<string, number> }>({ s: DEFAULT_SETTINGS, t: new Map(), p: {} });
+  useEffect(() => {
+    void Promise.all([AdsService.settings().catch(() => DEFAULT_SETTINGS), AdsService.tariffs().catch(() => new Map<string, number>()), PriceService.getAll().then((r) => r.prices).catch(() => ({}))])
+      .then(([s2, t, p]) => setCostCtx({ s: s2, t, p }));
+  }, []);
+  const period = useMemo(() => {
+    const today = new Date();
+    const keys = new Set<string>();
+    for (let i = rOffset; i < rOffset + rLen; i++) keys.add(dayKey(new Date(today.getFullYear(), today.getMonth(), today.getDate() - i)));
+    const list = orders.filter((o) => keys.has(dayKey(new Date(o.createdAt))));
+    const amt = (st: string[]) => list.filter((o) => st.includes(o.status)).reduce((n, o) => n + adsOrderValue(o, costCtx.s, costCtx.p), 0);
+    const cnt = (st: string[]) => list.filter((o) => st.includes(o.status)).length;
+    const live2 = list.filter((o) => o.status !== 'Cancelled');
+    const st = buildStats(list, new Map(), costCtx.s, () => 'all', costCtx.t, costCtx.p)[0];
+    return {
+      total: list.length, cancelled: cnt(['Cancelled']), delivered: cnt(['Delivered']), returned: cnt(['Returned']),
+      open: list.length - cnt(['Cancelled', 'Delivered', 'Returned']),
+      amountAll: live2.reduce((n, o) => n + adsOrderValue(o, costCtx.s, costCtx.p), 0),
+      amountDelivered: amt(['Delivered']), amountReturned: amt(['Returned']), amountOpen: live2.filter((o) => o.status !== 'Delivered' && o.status !== 'Returned').reduce((n, o) => n + adsOrderValue(o, costCtx.s, costCtx.p), 0),
+      profit: st ? st.profitBeforeAds : 0,
+    };
+  }, [orders, rOffset, rLen, costCtx]);
   const [scannerOpen, setScannerOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
   const [query, setQuery] = useState('');
@@ -332,8 +370,11 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
       return rows;
     };
 
-    const cur = build(0, range);
-    const prev = build(range, range);
+    const cur = build(rOffset, rLen);
+    const prev = build(rOffset + rLen, rLen);
+    const chartLen = Math.max(rLen, 7); // a one-day period still draws a 7-day chart
+    const chartCur = build(rOffset, chartLen);
+    const chartPrev = build(rOffset + chartLen, chartLen);
     const spark = build(0, 14);
     const inRange = new Set(cur.map((c) => c.key));
     const rangeOrders = live.filter((o) => inRange.has(dayKey(new Date(o.createdAt))));
@@ -404,8 +445,8 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
       toPrint: count('Pending', 'Processing', 'Label Generated'),
       readyToShip: count('Printed'),
       inTransit: count('Shipped'),
-      cur, prev, spark,
-      today: cur[cur.length - 1],
+      cur: chartCur, prev: chartPrev, spark,
+      today: build(0, 1)[0],
       curTotal,
       trend: prevTotal > 0 ? Math.round(((curTotal - prevTotal) / prevTotal) * 100) : null,
       codTotal: sum(cur.map((c) => c.cod)),
@@ -422,7 +463,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
       returnRows, speedRows, onTheRoad, waiting, collected, lost,
       stuckPrinted, longTransit, claimsReturns, demand,
     };
-  }, [orders, range]);
+  }, [orders, range]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const totalIn = (stock || []).reduce((s, r) => s + r.total_in, 0);
   const totalAvail = (stock || []).reduce((s, r) => s + r.available, 0);
@@ -478,11 +519,12 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   ];
 
   const rangeToggle = (
-    <div className="flex rounded-full p-0.5 k-card2">
-      {([7, 30] as Range[]).map((r) => (
-        <button key={r} onClick={() => setRange(r)} aria-pressed={range === r} className={`px-3 py-1 rounded-full text-xs font-semibold ${range === r ? 'k-btn-lime' : 'k-muted'}`}>{r} days</button>
-      ))}
-    </div>
+    <span className="flex items-center gap-2">
+    <select aria-label="Period" value={range} onChange={(e) => setRange(e.target.value as Range)} className="rounded-full k-card2 px-3 py-1.5 text-xs font-semibold">
+      {(Object.keys(RANGES) as Range[]).map((r) => <option key={r} value={r}>{RANGES[r].label}</option>)}
+    </select>
+    {range === 'custom' && <label className="flex items-center gap-1.5 text-xs k-muted">Last <input aria-label="Number of days" type="number" min={1} max={365} value={customDays} onChange={(e) => setCustomDays(parseInt(e.target.value, 10) || 0)} className="w-16 rounded-lg k-card2 px-2 py-1 text-xs font-semibold" /> days</label>}
+    </span>
   );
 
   return (
@@ -553,7 +595,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                 <p className="text-xs k-muted mt-2">{inr(m.today.sales)} in sales</p>
               </div>
               <div className="k-card p-4">
-                <p className="text-xs k-muted flex items-center gap-1.5"><IndianRupee className="w-3.5 h-3.5" /> Sales, last {range} days</p>
+                <p className="text-xs k-muted flex items-center gap-1.5"><IndianRupee className="w-3.5 h-3.5" /> Sales, {rangeText}</p>
                 <p className="k-display text-3xl font-bold leading-none mt-3"><Count value={m.salesTotal} money /></p>
                 <p className="text-xs k-muted mt-2">{inr(m.codOnTheWay)} still to collect</p>
                 <p className="text-xs k-muted">{inr(m.codTotal)} COD ordered</p>
@@ -605,10 +647,10 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
               <p className="text-xs k-muted mt-2">{m.inTransit} already with the courier</p>
             </div>
             <div className="k-card p-4 md:p-5">
-              <div className="flex items-center gap-2 text-sm k-muted"><IndianRupee className="w-4 h-4" /> Sales, last {range} days</div>
+              <div className="flex items-center gap-2 text-sm k-muted"><IndianRupee className="w-4 h-4" /> Sales, {rangeText}</div>
               <p className="k-display text-4xl font-bold leading-none mt-3"><Count value={m.salesTotal} money /></p>
               <p className="text-xs k-muted mt-2">{inr(m.codOnTheWay)} still to collect on delivery</p>
-              <p className="text-xs k-muted">{inr(m.codTotal)} COD ordered in these {range} days</p>
+              <p className="text-xs k-muted">{inr(m.codTotal)} COD ordered in {rangeText}</p>
             </div>
           </section>
         </>)}
@@ -676,7 +718,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
 
             <section className="k-card p-5">
               <h3 className="k-display text-2xl font-bold">Where orders go</h3>
-              <p className="text-sm k-muted mb-4">Top states, last {range} days</p>
+              <p className="text-sm k-muted mb-4">Top states, {rangeText}</p>
               {m.states.length === 0 && <p className="text-sm k-muted">No orders in this period.</p>}
               <ol className="space-y-4">
                 {m.states.map(([state, v], i) => (
@@ -696,9 +738,33 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
 
         {tab === 'sales' && (
           <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
+            <section className="k-card p-5 xl:col-span-3" aria-label="Period summary">
+              <div className="flex items-center justify-between gap-3 flex-wrap mb-4">
+                <div><h3 className="k-display text-2xl font-bold">Orders and money, {rangeText}</h3><p className="text-sm k-muted">Orders counted on the day they were placed. Profit is after product, packing and shipping, before ads.</p></div>
+                {rangeToggle}
+              </div>
+              <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+                {[
+                  { label: 'Orders', value: String(period.total), sub: `${period.delivered} delivered · ${period.open} on the way · ${period.cancelled} cancelled`, cls: '' },
+                  { label: 'Returns', value: String(period.returned), sub: `${inr(period.amountReturned)} came back`, cls: period.returned ? 'k-bad' : '' },
+                  { label: 'Total amount', value: inr(period.amountAll), sub: 'All orders except cancelled', cls: '' },
+                  { label: 'Delivered amount', value: inr(period.amountDelivered), sub: `${inr(period.amountOpen)} still on the way`, cls: 'k-lime-text' },
+                ].map((c) => (
+                  <div key={c.label} className="rounded-2xl k-card2 p-4">
+                    <p className="text-sm k-muted">{c.label}</p>
+                    <p className={`k-display text-3xl font-bold mt-1 ${c.cls}`}>{c.value}</p>
+                    <p className="text-xs k-muted mt-1">{c.sub}</p>
+                  </div>
+                ))}
+              </div>
+              <div className="rounded-2xl k-card2 p-4 mt-3 flex items-center justify-between gap-3 flex-wrap">
+                <div><p className="text-sm k-muted">Profit on delivered and returned orders</p><p className="text-xs k-muted">Orders still on the way are not counted yet. Ads are not taken out.</p></div>
+                <p className={`k-display text-3xl font-bold ${period.profit < 0 ? 'k-bad' : 'k-lime-text'}`}>{inr(period.profit)}</p>
+              </div>
+            </section>
             <section className="k-card p-5 xl:col-span-3">
               <h3 className="k-display text-2xl font-bold mb-1">Where your COD money is</h3>
-              <p className="text-sm k-muted mb-4">Cash-on-delivery amounts only. On the road is all-time; the rest are orders from the last {range} days.</p>
+              <p className="text-sm k-muted mb-4">Cash-on-delivery amounts only. On the road is all-time; the rest are orders from {rangeText}.</p>
               <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
                 {[
                   { label: 'Waiting to ship', value: m.waiting, icon: Hourglass, cls: '' },
@@ -742,7 +808,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
 
             <section className="k-card p-5">
               <h3 className="k-display text-2xl font-bold flex items-center gap-2"><Undo2 className="w-5 h-5 k-bad" /> Return rate by courier</h3>
-              <p className="text-sm k-muted mb-4">Returned out of delivered plus returned, last {range} days</p>
+              <p className="text-sm k-muted mb-4">Returned out of delivered plus returned, {rangeText}</p>
               {m.returnRows.length === 0 && <p className="text-sm k-muted">No delivered or returned orders in this period yet.</p>}
               <ul className="space-y-4">
                 {m.returnRows.map((r) => (

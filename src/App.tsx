@@ -35,6 +35,7 @@ const pageLoaders = {
   WarrantyView: () => import('./components/warranty/WarrantyView').then((m) => ({ default: m.WarrantyView })),
   WarrantyCardView: () => import('./components/warranty/WarrantyCardView').then((m) => ({ default: m.WarrantyCardView })),
   AgentView: () => import('./components/agent/AgentView').then((m) => ({ default: m.AgentView })),
+  AdsView: () => import('./components/ads/AdsView').then((m) => ({ default: m.AdsView })),
   SuppliersView: () => import('./components/suppliers/SuppliersView').then((m) => ({ default: m.SuppliersView })),
   ClaimsView: () => import('./components/claims/ClaimsView').then((m) => ({ default: m.ClaimsView })),
   TrackingView: () => import('./components/tracking/TrackingView').then((m) => ({ default: m.TrackingView })),
@@ -58,6 +59,7 @@ const WarrantyView = lazy(pageLoaders.WarrantyView);
 const WarrantyCardView = lazy(pageLoaders.WarrantyCardView);
 const ClaimsView = lazy(pageLoaders.ClaimsView);
 const SuppliersView = lazy(pageLoaders.SuppliersView);
+const AdsView = lazy(pageLoaders.AdsView);
 const AgentView = lazy(pageLoaders.AgentView);
 const TrackingView = lazy(pageLoaders.TrackingView);
 const InventoryAdd = lazy(pageLoaders.InventoryAdd);
@@ -458,6 +460,7 @@ export function App() {
 
           {activeTab === 'inventory-add' && <InventoryAdd />}
           {activeTab === 'suppliers' && <SuppliersView />}
+          {activeTab === 'ads' && <AdsView orders={orders} />}
           {activeTab === 'agent' && <AgentView />}
           {activeTab === 'inventory-list' && <InventoryList />}
           {activeTab === 'inventory-search' && <InventorySearch />}
